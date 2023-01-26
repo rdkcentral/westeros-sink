@@ -2223,11 +2223,14 @@ exit:
          wstSelectRate( gCtx, gCtx->defaultRate, 1 );
       }
 
-      drmModePlane *plane= conn->videoPlane->plane;
-      plane->crtc_id= gCtx->enc->crtc_id;
       conn->videoPlane->inUse= false;
       if ( !conn->videoPlane->keepLastFrame )
       {
+         drmModePlane *plane= conn->videoPlane->plane;
+         if ( gCtx->enc )
+         {
+            plane->crtc_id= gCtx->enc->crtc_id;
+         }
          DEBUG("wstVideoServerConnectionThread: drmModeSetPlane plane_id %d crtc_id %d", plane->plane_id, plane->crtc_id);
          rc= drmModeSetPlane( gCtx->drmFd,
                               plane->plane_id,
