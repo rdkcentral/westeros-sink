@@ -65,12 +65,12 @@
 #define DEFAULT_KEY_REPEAT_DELAY (500)
 #define DEFAULT_KEY_REPEAT_PERIOD (100)
 
-#define INT_FATAL(FORMAT, ...)      printf("Essos Fatal: " FORMAT "\n", ##__VA_ARGS__)
-#define INT_ERROR(FORMAT, ...)      printf("Essos Error: " FORMAT "\n", ##__VA_ARGS__)
-#define INT_WARNING(FORMAT, ...)    printf("Essos Warning: " FORMAT "\n",  ##__VA_ARGS__)
-#define INT_INFO(FORMAT, ...)       printf("Essos Info: " FORMAT "\n",  ##__VA_ARGS__)
-#define INT_DEBUG(FORMAT, ...)
-#define INT_TRACE(FORMAT, ...)
+#define INT_FATAL(FORMAT, ...)      essLog(0, "Essos Fatal: " FORMAT "\n", ##__VA_ARGS__)
+#define INT_ERROR(FORMAT, ...)      essLog(0, "Essos Error: " FORMAT "\n", ##__VA_ARGS__)
+#define INT_WARNING(FORMAT, ...)    essLog(1, "Essos Warning: " FORMAT "\n",  ##__VA_ARGS__)
+#define INT_INFO(FORMAT, ...)       essLog(2, "Essos Info: " FORMAT "\n",  ##__VA_ARGS__)
+#define INT_DEBUG(FORMAT, ...)      essLog(3, "Essos Debug: " FORMAT "\n",  ##__VA_ARGS__)
+#define INT_TRACE(FORMAT, ...)      essLog(4, "Essos Trace: " FORMAT "\n",  ##__VA_ARGS__)
 
 #define FATAL(FORMAT, ...)          INT_FATAL(FORMAT, ##__VA_ARGS__)
 #define ERROR(FORMAT, ...)          INT_ERROR(FORMAT, ##__VA_ARGS__)
@@ -229,6 +229,7 @@ typedef struct _EssCtx
    #endif
 } EssCtx;
 
+static void essLog( int level, const char *fmt, ... );
 static long long essGetCurrentTimeMillis(void);
 static bool essPlatformInit( EssCtx *ctx );
 static void essPlatformTerm( EssCtx *ctx );
@@ -304,11 +305,31 @@ static EGLint gDefaultEGLCtxAttr[]=
   EGL_NONE
 };
 
+static int g_activeLevel= 2;
+
+static void essLog( int level, const char *fmt, ... )
+{
+   if ( level <= g_activeLevel )
+   {
+      va_list argptr;
+      va_start( argptr, fmt );
+      vfprintf( stderr, fmt, argptr );
+      va_end( argptr );
+   }
+}
+
 EssCtx* EssContextCreate()
 {
    EssCtx *ctx= 0;
 
    INFO("westeros (essos) version " WESTEROS_VERSION_FMT, WESTEROS_VERSION );
+
+   const char *env= getenv( "ESSOS_DEBUG" );
+   if ( env )
+   {
+      int level= atoi( env );
+      g_activeLevel= level;
+   }
 
    ctx= (EssCtx*)calloc( 1, sizeof(EssCtx) );
    if ( ctx )
