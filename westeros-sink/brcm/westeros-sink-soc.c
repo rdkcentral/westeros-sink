@@ -54,6 +54,16 @@
 #define DRM_FORMAT_RGBA8888 (0x34324152)
 #endif
 
+#if ((NEXUS_PLATFORM_VERSION_MAJOR >= 18) || (NEXUS_PLATFORM_VERSION_MAJOR >= 17 && NEXUS_PLATFORM_VERSION_MINOR >= 3))
+#if ((GST_VERSION_MAJOR == 1) && (GST_VERSION_MINOR >= 18))
+   #define VIDEO_TRANSFER_SMPTE2084 GST_VIDEO_TRANSFER_SMPTE2084
+   #define VIDEO_TRANSFER_ARIB_STD_B67 GST_VIDEO_TRANSFER_ARIB_STD_B67
+#else
+   #define VIDEO_TRANSFER_SMPTE2084 (13)
+   #define VIDEO_TRANSFER_ARIB_STD_B67 (14)
+#endif
+#endif
+
 GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
 #define GST_CAT_DEFAULT gst_westeros_sink_debug
 
@@ -1556,12 +1566,12 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
             GST_LOG("gst_westeros_sink_soc_accept_caps has colorimetry");
             colorimetry= gst_structure_get_string(structure,"colorimetry");
             gst_video_colorimetry_from_string(&colorimetryInfo,colorimetry);
-            if ( colorimetryInfo.transfer == 13 )
-            { // GST_VIDEO_TRANSFER_SMPTE_ST_2084
+            if ( colorimetryInfo.transfer == VIDEO_TRANSFER_SMPTE2084 )
+            {
                sink->soc.eotf= NEXUS_VideoEotf_eHdr10;
             }
-            else if ( colorimetryInfo.transfer == 14 )
-            { // GST_VIDEO_TRANSFER_ARIB_STD_B67
+            else if ( colorimetryInfo.transfer == VIDEO_TRANSFER_ARIB_STD_B67 )
+            {
                sink->soc.eotf= NEXUS_VideoEotf_eAribStdB67;
             }
             else
@@ -2210,12 +2220,12 @@ static gboolean queryPeerHandles(GstWesterosSink *sink)
             GST_DEBUG("queryPeerHandles: sink %p have colorimetry", sink);
             colorimetry= gst_structure_get_string(structure,"colorimetry");
             gst_video_colorimetry_from_string(&colorimetryInfo,colorimetry);
-            if ( colorimetryInfo.transfer == 13 )
-            { // GST_VIDEO_TRANSFER_SMPTE_ST_2084
+            if ( colorimetryInfo.transfer == VIDEO_TRANSFER_SMPTE2084 )
+            {
                sink->soc.eotf= NEXUS_VideoEotf_eHdr10;
             }
-            else if ( colorimetryInfo.transfer == 14 )
-            { // GST_VIDEO_TRANSFER_ARIB_STD_B67
+            else if ( colorimetryInfo.transfer == VIDEO_TRANSFER_ARIB_STD_B67 )
+            {
                sink->soc.eotf= NEXUS_VideoEotf_eAribStdB67;
             }
             else
