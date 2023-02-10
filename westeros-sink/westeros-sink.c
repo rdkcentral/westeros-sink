@@ -1591,6 +1591,7 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
       case GST_STATE_CHANGE_NULL_TO_READY:
       {
          printf("westeros (sink) version " WESTEROS_VERSION_FMT "\n", WESTEROS_VERSION );
+         printf("gst version %d.%d.%d\n", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
 
          resMgrInit(sink);
          resMgrRequestDecoder(sink);
