@@ -92,6 +92,7 @@ static bool testCaseSocSinkPauseResumeTrickState( EMCTX *ctx );
 static bool testCaseSocRenderBasicCompositionEmbeddedFast( EMCTX *emctx );
 static bool testCaseSocRenderBasicCompositionEmbeddedFastRepeater( EMCTX *emctx );
 static bool testCaseSocEssosDualMediaPlayback( EMCTX *emctx );
+static bool testCaseSocSinkStatsQuery( EMCTX *emctx );
 
 TESTCASE socTests[]=
 {
@@ -250,6 +251,10 @@ TESTCASE socTests[]=
    { "testSocEssosDualMediaPlayback",
      "Test dual media playback with Essos",
      testCaseSocEssosDualMediaPlayback
+   },
+   { "testSocSinkVideoStatsQuery",
+     "Test westerossink stats query",
+     testCaseSocSinkStatsQuery
    },
    {
      "", "", (TESTCASEFUNC)0
@@ -6786,6 +6791,114 @@ exit:
    if ( wctx )
    {
       WstCompositorDestroy( wctx );
+   }
+
+   return testResult;
+}
+
+static bool testCaseSocSinkStatsQuery( EMCTX *emctx )
+{
+   bool testResult= false;
+   int argc= 0;
+   char **argv= 0;
+   GstElement *pipeline= 0;
+   GstElement *src= 0;
+   GstElement *sink= 0;
+   EMSimpleVideoDecoder *videoDecoder= 0;
+   int stcChannelProxy;
+   int videoPidChannelProxy;
+   GstStructure *stats= 0;
+
+   videoDecoder= EMGetSimpleVideoDecoder( emctx, EM_TUNERID_MAIN );
+   if ( !videoDecoder )
+   {
+      EMERROR("Failed to obtain test video decoder");
+      goto exit;
+   }
+
+   EMSetStcChannel( emctx, (void*)&stcChannelProxy );
+   EMSetVideoCodec( emctx, bvideo_codec_h264 );
+   EMSetVideoPidChannel( emctx, (void*)&videoPidChannelProxy );
+   EMSimpleVideoDecoderSetVideoSize( videoDecoder, 1920, 1080 );
+
+   gst_init( &argc, &argv );
+
+   pipeline= gst_pipeline_new("pipeline");
+   if ( !pipeline )
+   {
+      EMERROR("Failed to create pipeline instance");
+      goto exit;
+   }
+
+   src= createVideoSrc( emctx, videoDecoder );
+   if ( !src )
+   {
+      EMERROR("Failed to create src instance");
+      goto exit;
+   }
+
+   sink= gst_element_factory_make( "westerossink", "vsink" );
+   if ( !sink )
+   {
+      EMERROR("Failed to create sink instance");
+      goto exit;
+   }
+
+   g_object_set( G_OBJECT(sink), "immediate-output", TRUE, NULL );
+
+   gst_bin_add_many( GST_BIN(pipeline), src, sink, NULL );
+
+   if ( gst_element_link( src, sink ) != TRUE )
+   {
+      EMERROR("Failed to link src and sink");
+      goto exit;
+   }
+
+   gst_element_set_state( pipeline, GST_STATE_PLAYING );
+
+   // Allow pipeline to run briefly
+   usleep( 2000000 );
+
+   gst_element_set_state( pipeline, GST_STATE_PAUSED );
+
+   g_object_get( G_OBJECT(sink), "stats", &stats, NULL );
+   if ( stats )
+   {
+      guint64 rendered= 0;
+      guint64 dropped= 0;
+      const GValue *value;
+      value= gst_structure_get_value( stats, "rendered" );
+      if ( value )
+      {
+         rendered= g_value_get_uint64( value );
+      }
+      value= gst_structure_get_value( stats, "dropped" );
+      if ( value )
+      {
+         dropped= g_value_get_uint64( value );
+      }
+      gst_structure_free( stats );
+      g_print("rendered %lld dropped %lld\n", rendered, dropped);
+      if ( rendered+dropped == 0 )
+      {
+         EMERROR("Unexpected stats: rendered %lld dropped %lld");
+         goto exit;
+      }
+   }
+   else
+   {
+      EMERROR("Failed to get sink stats");
+      goto exit;
+   }
+
+   gst_element_set_state( pipeline, GST_STATE_NULL );
+
+   testResult= true;
+
+exit:
+   if ( pipeline )
+   {
+      gst_object_unref( pipeline );
    }
 
    return testResult;
