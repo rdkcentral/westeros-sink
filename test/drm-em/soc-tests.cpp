@@ -77,6 +77,7 @@ static bool testCaseSocSinkFrameAdvanceWithCompositor( EMCTX *ctx );
 static bool testCaseSocSinkBasicPipelineGfx( EMCTX *ctx );
 static bool testCaseSocEssosDualMediaPlayback( EMCTX *emctx );
 static bool testCaseSocSinkVideoPosition( EMCTX *emctx );
+static bool testCaseSocSinkStatsQuery( EMCTX *emctx );
 
 TESTCASE socTests[]=
 {
@@ -175,6 +176,10 @@ TESTCASE socTests[]=
    { "testSocSinkVideoPosition",
      "Test westerossink video positioning",
      testCaseSocSinkVideoPosition
+   },
+   { "testSocSinkVideoStatsQuery",
+     "Test westerossink stats query",
+     testCaseSocSinkStatsQuery
    },
    {
      "", "", (TESTCASEFUNC)0
@@ -3896,3 +3901,173 @@ exit:
    return testResult;
 }
 
+static bool testCaseSocSinkStatsQuery( EMCTX *emctx )
+{
+   bool testResult= false;
+   int argc= 0;
+   char **argv= 0;
+   bool result;
+   GstElement *pipeline= 0;
+   GstElement *src= 0;
+   GstElement *sink= 0;
+   EMSimpleVideoDecoder *videoDecoder= 0;
+   EGLBoolean b;
+   TestEGLCtx eglCtx;
+   int windowWidth= 1920;
+   int windowHeight= 1080;
+   WstGLCtx *glCtx= 0;
+   void  *nativeWindow= 0;
+   GstStructure *stats= 0;
+
+   memset( &eglCtx, 0, sizeof(TestEGLCtx) );
+
+   if ( getenv("WAYLAND_DISPLAY") == 0 )
+   {
+      EMStart( emctx );
+
+      result= testSetupEGL( &eglCtx, 0 );
+      if ( !result )
+      {
+         EMERROR("testSetupEGL failed");
+         goto exit;
+      }
+
+      glCtx= WstGLInit();
+      if ( !glCtx )
+      {
+         EMERROR("Unable to create westeros-gl context");
+         goto exit;
+      }
+
+      nativeWindow= WstGLCreateNativeWindow( glCtx, 0, 0, windowWidth, windowHeight );
+      if ( !nativeWindow )
+      {
+         EMERROR("Unable to create westeros-gl native window");
+         goto exit;
+      }
+
+      eglCtx.eglSurfaceWindow= eglCreateWindowSurface( eglCtx.eglDisplay,
+                                                     eglCtx.eglConfig,
+                                                     (EGLNativeWindowType)nativeWindow,
+                                                     NULL );
+      printf("eglCreateWindowSurface: eglSurfaceWindow %p\n", eglCtx.eglSurfaceWindow );
+
+      b= eglMakeCurrent( eglCtx.eglDisplay, eglCtx.eglSurfaceWindow, eglCtx.eglSurfaceWindow, eglCtx.eglContext );
+      if ( !b )
+      {
+         EMERROR("error: eglMakeCurrent failed: %X", eglGetError() );
+         goto exit;
+      }
+
+      eglSwapInterval( eglCtx.eglDisplay, 1 );
+      eglSwapBuffers(eglCtx.eglDisplay, eglCtx.eglSurfaceWindow);
+      usleep( 34000 );
+   }
+
+   videoDecoder= EMGetSimpleVideoDecoder( emctx, EM_TUNERID_MAIN );
+   if ( !videoDecoder )
+   {
+      EMERROR("Failed to obtain test video decoder");
+      goto exit;
+   }
+
+   EMSetVideoCodec( emctx, V4L2_PIX_FMT_H264 );
+   EMSimpleVideoDecoderSetVideoSize( videoDecoder, 1920, 1080 );
+   EMSimpleVideoDecoderSetFrameRate( videoDecoder, 120.0 );
+
+   gst_init( &argc, &argv );
+
+   pipeline= gst_pipeline_new("pipeline");
+   if ( !pipeline )
+   {
+      EMERROR("Failed to create pipeline instance");
+      goto exit;
+   }
+
+   src= createVideoSrc( emctx, videoDecoder );
+   if ( !src )
+   {
+      EMERROR("Failed to create src instance");
+      goto exit;
+   }
+
+   sink= gst_element_factory_make( "westerossink", "vsink" );
+   if ( !sink )
+   {
+      EMERROR("Failed to create sink instance");
+      goto exit;
+   }
+
+   g_object_set( G_OBJECT(sink), "immediate-output", TRUE, NULL );
+
+   gst_bin_add_many( GST_BIN(pipeline), src, sink, NULL );
+
+   if ( gst_element_link( src, sink ) != TRUE )
+   {
+      EMERROR("Failed to link src and sink");
+      goto exit;
+   }
+
+   gst_element_set_state( pipeline, GST_STATE_PLAYING );
+
+   // Allow pipeline to run briefly
+   usleep( 2000000 );
+
+   gst_element_set_state( pipeline, GST_STATE_PAUSED );
+
+   g_object_get( G_OBJECT(sink), "stats", &stats, NULL );
+   if ( stats )
+   {
+      guint64 rendered= 0;
+      guint64 dropped= 0;
+      const GValue *value;
+      value= gst_structure_get_value( stats, "rendered" );
+      if ( value )
+      {
+         rendered= g_value_get_uint64( value );
+      }
+      value= gst_structure_get_value( stats, "dropped" );
+      if ( value )
+      {
+         dropped= g_value_get_uint64( value );
+      }
+      gst_structure_free( stats );
+      g_print("rendered %lld dropped %lld\n", rendered, dropped);
+      if ( rendered+dropped == 0 )
+      {
+         EMERROR("Unexpected stats: rendered %lld dropped %lld");
+         goto exit;
+      }
+   }
+   else
+   {
+      EMERROR("Failed to get sink stats");
+      goto exit;
+   }
+
+   gst_element_set_state( pipeline, GST_STATE_NULL );
+
+   testResult= true;
+
+exit:
+   if ( pipeline )
+   {
+      gst_object_unref( pipeline );
+   }
+   if ( eglCtx.eglSurfaceWindow )
+   {
+      eglDestroySurface( eglCtx.eglDisplay, eglCtx.eglSurfaceWindow );
+      eglCtx.eglSurfaceWindow= EGL_NO_SURFACE;
+   }
+   if ( nativeWindow )
+   {
+      WstGLDestroyNativeWindow( glCtx, nativeWindow );
+   }
+   if ( glCtx )
+   {
+      WstGLTerm( glCtx );
+   }
+   testTermEGL( &eglCtx );
+
+   return testResult;
+}

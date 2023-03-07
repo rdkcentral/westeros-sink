@@ -361,6 +361,7 @@ static void emVideoSrcLoop( GstPad *pad )
    int bufferSize;
    float frameRate;
    float bitRate;
+   long long dataInterval;
    long long nanoTime;
    bool needStep= false;
 
@@ -381,7 +382,9 @@ static void emVideoSrcLoop( GstPad *pad )
       EMSimpleVideoDecoderSetFrameNumber( src->dec, src->frameNumber );
       pthread_mutex_unlock( &src->mutex );
 
-      bufferSize= (DATA_INTERVAL*bitRate)/8;
+      dataInterval= (long long)(DATA_INTERVAL*(60.0/frameRate));
+
+      bufferSize= (dataInterval*bitRate)/8;
 
       buffer= gst_buffer_new_allocate( 0, // default allocator
                                        bufferSize,
@@ -441,7 +444,7 @@ static void emVideoSrcLoop( GstPad *pad )
          }
 
          GST_PAD_STREAM_UNLOCK(pad);
-         usleep( DATA_INTERVAL );
+         usleep( dataInterval );
          GST_PAD_STREAM_LOCK(pad);
       }
       else
