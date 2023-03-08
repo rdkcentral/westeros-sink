@@ -5009,10 +5009,14 @@ static void wstTermCtx( WstGLCtx *ctx )
       wstReleaseConnectorProperties( ctx );
       wstReleaseCrtcProperties( ctx );
       pthread_mutex_lock( &ctx->mutex );
-      if ( ctx->overlayPlanes.totalCount )
+      while ( ctx->overlayPlanes.totalCount )
       {
          WstOverlayPlane *toFree= 0;
          WstOverlayPlane *iter= ctx->overlayPlanes.usedHead;
+         if ( !iter )
+         {
+            iter= ctx->overlayPlanes.availHead;
+         }
          while( iter )
          {
             if ( iter->formats )
@@ -5036,6 +5040,7 @@ static void wstTermCtx( WstGLCtx *ctx )
             toFree= iter;
             iter= iter->next;
             free( toFree );
+            --ctx->overlayPlanes.totalCount;
          }
       }
       pthread_mutex_unlock( &ctx->mutex );
