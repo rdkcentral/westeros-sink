@@ -1095,6 +1095,11 @@ static void wstOverlayFree( WstOverlayPlanes *planes, WstOverlayPlane *overlay )
       for( i= 0; i < ACTIVE_FRAMES; ++i )
       {
          overlay->videoFrame[i].plane= 0;
+         if ( (i == FRAME_CURR) && overlay->keepLastFrame )
+         {
+            DEBUG("keeping last frame: when replacement frame is displayed");
+            continue;
+         }
          overlay->videoFrame[i].bufferId= -1;
       }
       overlay->inUse= false;
