@@ -1247,7 +1247,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
       case PROP_STOP_KEEP_FRAME:
          {
             bool keep= g_value_get_boolean(value);
-            if ( (keep != sink->soc.keepLastFrame) && sink->soc.conn )
+            if ( (keep != sink->soc.keepLastFrame) || !sink->soc.conn )
             {
                sink->soc.keepLastFrameChanged= TRUE;
             }
@@ -1531,6 +1531,15 @@ gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *p
 {
    WESTEROS_UNUSED(sink);
    gboolean keepLastFrame;
+
+   if ( sink->soc.keepLastFrameChanged && !sink->soc.conn &&
+        !sink->rm || (sink->resAssignedId >= 0) )
+   {
+      /* if keepLastFrame has been set prior to establishing a
+         connection to the video server and we are assigned a resource,
+         make a connnection now so that the last frame policy is updated */
+      sink->soc.conn= wstCreateVideoClientConnection( sink, DEFAULT_VIDEO_SERVER );
+   }
 
    /* ensure cleanup happens but preserve
       keepLastFrame across transition to null */
