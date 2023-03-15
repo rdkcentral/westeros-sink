@@ -1634,42 +1634,35 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 {
    unsigned int pts45k= (unsigned int)( pts / 2 );
    NEXUS_VideoDecoderStatus videoStatus;
-   if ( pts == 0 )
+
+   if ( NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) != NEXUS_SUCCESS )
    {
-      NEXUS_Error rc;
-      rc= NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus);
-      if ( rc == NEXUS_SUCCESS )
-      {
-         if ( videoStatus.fifoDepth || videoStatus.queueDepth )
-         {
-            /* We have seen the following sequence: startSeg!=0, buffer0,1 startSeg==0
-               In this case flushing will toss the first IFrame and cause video to jump forward to next iframe, which can be more than a second
-               video is lost, then audio is delayed as it needs to dump lots of frames to catch up */
-            GST_WARNING("Not flushing video decoder on startSeg==0, fifodepth: %d  frames: %d  pts: %ums  pts45k: %ums  lastStartPts45k %ums",
-                         videoStatus.fifoDepth, videoStatus.queueDepth, videoStatus.pts/45, pts45k/45, sink->soc.lastStartPts45k/45 );
-            /* The other concern is that there maybe a sequnce similar to above but the buffer0 PTS could be "far" from the previous startSeg!=0,
-               which is still in force since we haven't flushed, and therefore playback won't start
-               as the video decoder will be waiting for the buffer PTS to match/exceed the previous SetStartPts.
-               Add debug in _render to catch/Warn this case and correct later if necessary */
-         }
-         else
-         {
-             GST_DEBUG("Flushing Decoder, will clear _SetStartPts");
-             NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
-             sink->soc.lastStartPts45k= 0;
-         }
-      }
-      else
-      {
-         GST_ERROR("NEXUS_SimpleVideoDecoder_GetStatus failed");
-      }
+     /* if getting decoder status fails probably things are in
+        a really bad state, so avoid calling nexus */
+      GST_ERROR("NEXUS_SimpleVideoDecoder_GetStatus failed");
+      videoStatus.fifoDepth= 1;
+   }
+
+   if ( GST_STATE(GST_ELEMENT(sink)) == GST_STATE_PLAYING && ( videoStatus.fifoDepth || videoStatus.queueDepth ) )
+   {
+      GST_WARNING("Segment Event while playing, ignoring.  fifodepth: %d  frames: %d  decoderPts: %ums  pts45k: %ums  lastStartPts45k %ums",
+                           videoStatus.fifoDepth, videoStatus.queueDepth, videoStatus.pts/45, pts45k/45, sink->soc.lastStartPts45k/45 );
    }
    else
    {
-      GST_DEBUG("NEXUS_SimpleVideoDecoder_SetStartPts %ums", pts45k/45);
-      NEXUS_SimpleVideoDecoder_SetStartPts( sink->soc.videoDecoder, pts45k );
-      sink->soc.lastStartPts45k= pts45k;
-      sink->soc.chkBufToStartPts= TRUE;
+      if ( pts == 0 )
+      {
+         GST_DEBUG("Flushing Decoder, will clear _SetStartPts");
+         NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
+         sink->soc.lastStartPts45k= 0;
+      }
+      else
+      {
+         GST_DEBUG("NEXUS_SimpleVideoDecoder_SetStartPts %ums", pts45k/45);
+         NEXUS_SimpleVideoDecoder_SetStartPts( sink->soc.videoDecoder, pts45k );
+         sink->soc.lastStartPts45k= pts45k;
+         sink->soc.chkBufToStartPts= TRUE;
+      }
    }
 
    if ( sink->soc.clientPlaySpeed != sink->playbackRate )
