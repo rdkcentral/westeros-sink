@@ -2093,16 +2093,17 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
             sink->soc.inBuffers[buffIndex].buf.length= maxSize;
          }
          rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_QBUF, &sink->soc.inBuffers[buffIndex].buf );
-         UNLOCK(sink);
          if ( rc < 0 )
          {
             GST_ERROR("gst_westeros_sink_soc_render: queuing input buffer failed: rc %d errno %d", rc, errno );
+            UNLOCK(sink);
             goto exit;
          }
          ++sink->soc.inQueuedCount;
-         avProgLog( GST_BUFFER_PTS(buffer), sink->resAssignedId, "StoD", wstInFullness(sink));
          sink->soc.inBuffers[buffIndex].queued= true;
          sink->soc.inBuffers[buffIndex].gstbuf= gst_buffer_ref(buffer);
+         UNLOCK(sink);
+         avProgLog( GST_BUFFER_PTS(buffer), sink->resAssignedId, "StoD", wstInFullness(sink));
       }
       else
       #endif
