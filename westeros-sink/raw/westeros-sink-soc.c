@@ -1071,7 +1071,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       {
          sink->soc.quitDispatchThread= FALSE;
          GST_DEBUG_OBJECT(sink, "starting westeros_sink_dispatch thread");
-         sink->soc.dispatchThread= g_thread_new("westeros_sink_dispatch", wstDispatchThread, sink);
+         sink->soc.dispatchThread= g_thread_new("westerossinkDSP", wstDispatchThread, sink);
       }
    }
 
@@ -1080,7 +1080,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       sink->soc.videoPlaying= TRUE;
       sink->soc.quitEOSDetectionThread= FALSE;
       GST_DEBUG_OBJECT(sink, "starting westeros_sink_eos thread");
-      sink->soc.eosDetectionThread= g_thread_new("westeros_sink_eos", wstEOSDetectionThread, sink);
+      sink->soc.eosDetectionThread= g_thread_new("westerossinkEOS", wstEOSDetectionThread, sink);
    }
 
    GST_BASE_SINK_PREROLL_UNLOCK(GST_BASE_SINK(sink));
@@ -1125,7 +1125,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       if ( !sink->soc.conn && (sink->soc.frameOutCount == 0))
       {
          LOCK(sink);
-         sink->soc.firstFrameThread= g_thread_new("westeros_first_frame", wstFirstFrameThread, sink);
+         sink->soc.firstFrameThread= g_thread_new("westerossinkFFr", wstFirstFrameThread, sink);
          UNLOCK(sink);
       }
       if ( (sink->soc.frameInCount == 0) && sink->soc.captureEnabled && sink->soc.useTunnelled )
@@ -1393,7 +1393,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
                if ( !sink->soc.conn && (sink->soc.frameOutCount == 0))
                {
                   LOCK(sink);
-                  sink->soc.firstFrameThread= g_thread_new("westeros_first_frame", wstFirstFrameThread, sink);
+                  sink->soc.firstFrameThread= g_thread_new("westerossinkFFr", wstFirstFrameThread, sink);
                   UNLOCK(sink);
                }
 
@@ -3019,14 +3019,14 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
          {
             sink->soc.emitFirstFrameSignal= FALSE;
             LOCK(sink);
-            sink->soc.firstFrameThread= g_thread_new("westeros_first_frame", wstFirstFrameThread, sink);
+            sink->soc.firstFrameThread= g_thread_new("westerossinkFFr", wstFirstFrameThread, sink);
             UNLOCK(sink);
          }
          if ( sink->soc.emitUnderflowSignal )
          {
             sink->soc.emitUnderflowSignal= FALSE;
             LOCK(sink);
-            sink->soc.underflowThread= g_thread_new("westeros_underflow", wstUnderflowThread, sink);
+            sink->soc.underflowThread= g_thread_new("westerossinkUF", wstUnderflowThread, sink);
             UNLOCK(sink);
          }
       }
@@ -3851,3 +3851,4 @@ static GstStructure *wstSinkGetStats( GstWesterosSink * sink )
       "dropped", G_TYPE_UINT64, (guint64)sink->soc.numDropped,
       "rendered", G_TYPE_UINT64, (guint64)sink->soc.frameDisplayCount, NULL);
 }
+

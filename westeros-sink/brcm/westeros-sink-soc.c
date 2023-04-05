@@ -1849,7 +1849,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    if ( sink->soc.captureThread == NULL ) 
    {
       GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_capture thread");
-      sink->soc.captureThread= g_thread_new("westeros_sink_capture", captureThread, sink);        
+      sink->soc.captureThread= g_thread_new("westerossinkCAP", captureThread, sink);
    }
  
    sink->videoStarted= TRUE;
@@ -4042,7 +4042,7 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
       if ( frame->frameNumber == 0 )
       {
          GThread *firstFrameThread;
-         firstFrameThread= g_thread_new("westeros_first_frame", swFirstFrameThread, gst_object_ref(sink));
+         firstFrameThread= g_thread_new("westerossinkFFr", swFirstFrameThread, gst_object_ref(sink));
          if ( firstFrameThread )
          {
             g_thread_unref( firstFrameThread );

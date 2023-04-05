@@ -2289,7 +2289,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       if ( sink->soc.dispatchThread == NULL )
       {
          GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_dispatch thread");
-         sink->soc.dispatchThread= g_thread_new("westeros_sink_dispatch", wstDispatchThread, sink);
+         sink->soc.dispatchThread= g_thread_new("westerossinkDSP", wstDispatchThread, sink);
       }
    }
 
@@ -2297,14 +2297,14 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    if ( sink->soc.videoOutputThread == NULL )
    {
       GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_video_output thread");
-      sink->soc.videoOutputThread= g_thread_new("westeros_sink_video_output", wstVideoOutputThread, sink);
+      sink->soc.videoOutputThread= g_thread_new("westerossinkVO", wstVideoOutputThread, sink);
    }
 
    sink->soc.quitEOSDetectionThread= FALSE;
    if ( sink->soc.eosDetectionThread == NULL )
    {
       GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_eos thread");
-      sink->soc.eosDetectionThread= g_thread_new("westeros_sink_eos", wstEOSDetectionThread, sink);
+      sink->soc.eosDetectionThread= g_thread_new("westerossinkEOS", wstEOSDetectionThread, sink);
    }
 
    sink->videoStarted= TRUE;
@@ -7378,7 +7378,7 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
       {
          sink->soc.quitDispatchThread= FALSE;
          GST_DEBUG_OBJECT(sink, "swDisplay: starting westeros_sink_dispatch thread");
-         sink->soc.dispatchThread= g_thread_new("westeros_sink_dispatch", wstDispatchThread, sink);
+         sink->soc.dispatchThread= g_thread_new("westerossinkDSP", wstDispatchThread, sink);
       }
    }
    if ( sink->soc.eosDetectionThread == NULL )
@@ -7387,7 +7387,7 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
       sink->eosEventSeen= TRUE;
       sink->soc.quitEOSDetectionThread= FALSE;
       GST_DEBUG_OBJECT(sink, "swDisplay: starting westeros_sink_eos thread");
-      sink->soc.eosDetectionThread= g_thread_new("westeros_sink_eos", wstEOSDetectionThread, sink);
+      sink->soc.eosDetectionThread= g_thread_new("westerossinkEOS", wstEOSDetectionThread, sink);
    }
 
    bi= sink->soc.nextSWBuffer;
@@ -7441,7 +7441,7 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
 
       if ( frame->frameNumber == 0 )
       {
-         sink->soc.firstFrameThread= g_thread_new("westeros_first_frame", swFirstFrameThread, sink);
+         sink->soc.firstFrameThread= g_thread_new("westerossinkFFr", swFirstFrameThread, sink);
       }
 
       if ( needBounds(sink) && sink->vpcSurface )
