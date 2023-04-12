@@ -2918,7 +2918,7 @@ static void wstDisplayServerProcessMessage( DisplayServerConnection *conn, int m
                               {
                                  value= 1;
                               }
-                              if ( value >= 0 )
+                              if ( value != gCtx->outputEnable )
                               {
                                  pthread_mutex_lock( &gMutex );
                                  gCtx->outputEnable= value;
@@ -5690,7 +5690,7 @@ static void *wstRefreshThread( void *arg )
          sem_post(&ctx->offloadMsgQ.sem);
       }
 
-      if ( ctx->modeSet && ctx->useVBlank )
+      if ( ctx->modeSet && ctx->useVBlank && ctx->outputEnable )
       {
          int rc;
 
@@ -6092,6 +6092,7 @@ static void wstSwapDRMBuffersAtomic( WstGLCtx *ctx )
    {
       if ( ctx->modeSet )
       {
+         flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
          wstAtomicAddProperty( ctx, req, ctx->conn->connector_id,
                                ctx->connectorProps->count_props, ctx->connectorPropRes,
                                "CRTC_ID", 0 );
@@ -6539,7 +6540,7 @@ static void wstSwapDRMBuffersAtomic( WstGLCtx *ctx )
    #endif
    #endif
 
-   if ( (flags & DRM_MODE_ATOMIC_ALLOW_MODESET) && !rc )
+   if ( (flags & DRM_MODE_ATOMIC_ALLOW_MODESET) && !rc && ctx->outputEnable )
    {
       DEBUG("mode set");
       ctx->modeSet= true;
