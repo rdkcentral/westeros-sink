@@ -2219,9 +2219,12 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
          len= strlen( (char*)sink->soc.caps.driver );
          if ( (len == 13) && !strncmp( (char*)sink->soc.caps.driver, "bcm2835-codec", len) )
          {
-            GST_DEBUG("Setup output prior to source change for (%s)", sink->soc.caps.driver);
             sink->soc.expectNoLastFrame= TRUE;
-            wstSetupOutput( sink );
+            if ( sink->soc.caps.version < 330335 )
+            {
+               GST_DEBUG("Setup output prior to source change for (%s)", sink->soc.caps.driver);
+               wstSetupOutput( sink );
+            }
          }
 
          if ( !gst_westeros_sink_soc_start_video( sink ) )
