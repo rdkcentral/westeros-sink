@@ -206,6 +206,7 @@ typedef struct _VideoFrame
    bool hidden;
    bool canExpire;
    bool dropped;
+   bool advanced;
    uint32_t fbId;
    uint32_t handle0;
    uint32_t handle1;
@@ -1286,8 +1287,17 @@ static void wstFreeVideoFrameResources( VideoFrame *f )
    {
       if ( f->vf )
       {
-         FRAME("freeing sync vf %p", f->vf);
-         free( f->vf );
+         FRAME("freeing sync vf %p advanced %d", f->vf, f->advanced);
+         #ifdef WESTEROS_GL_AVSYNC
+         if ( f->advanced )
+         {
+            FRAME(" advance pushed wait av-sync to free vf %p", f->vf);
+         }
+         else
+         #endif
+         {
+            free( f->vf );
+         }
          f->vf= 0;
       }
       if ( f->fbId )
@@ -1913,6 +1923,7 @@ static void *wstVideoServerConnectionThread( void *arg )
                                  videoFrame.vf= 0;
                                  videoFrame.canExpire= true;
                                  videoFrame.dropped= false;
+                                 videoFrame.advanced= false;
                                  conn->videoPlane->hidden= false;
                                  wstVideoFrameManagerPushFrame( conn->videoPlane->vfm, &videoFrame );
                               }
@@ -3784,6 +3795,7 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
       {
          f= &vfm->queue[0];
          f->canExpire= false;
+         f->advanced= true;
          vfm->frameAdvance= false;
       }
       goto done;
