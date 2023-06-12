@@ -371,6 +371,7 @@ static void emVideoSrcLoop( GstPad *pad )
       {
          src->frameNumber= decoderFrameNumber;
          needStep= true;
+         GST_DEBUG("need step", decoderFrameNumber);
       }
    }
    if ( !src->paused || src->needSegment || needStep )
@@ -412,6 +413,7 @@ static void emVideoSrcLoop( GstPad *pad )
 
          GST_LOG("push buffer for frame %d", src->frameNumber);
          rv= gst_pad_push( pad, buffer );
+         GST_LOG("done push buffer for frame %d", src->frameNumber);
          if ( (rv != GST_FLOW_OK) && (rv != GST_FLOW_FLUSHING) )
          {
             g_print("Error: unable to push buffer: flow %d\n", rv);

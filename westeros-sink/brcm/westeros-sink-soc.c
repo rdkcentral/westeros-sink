@@ -130,6 +130,7 @@ static NEXUS_VideoCodec convertVideoCodecToNexus(bvideo_codec codec);
 static long long getCurrentTimeMillis(void);
 static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat speed, gboolean playing );
 static void setDecodeMode( GstWesterosSink *sink );
+static gboolean processSendEventSinkSoc( GstWesterosSink *sink, GstEvent *event, gboolean *passToDefault);
 static gboolean processEventSinkSoc( GstWesterosSink *sink, GstPad *pad, GstEvent *event, gboolean *passToDefault);
 static GstFlowReturn prerollSinkSoc(GstBaseSink *base_sink, GstBuffer *buffer);
 #if ((NEXUS_PLATFORM_VERSION_MAJOR >= 18) || (NEXUS_PLATFORM_VERSION_MAJOR >= 17 && NEXUS_PLATFORM_VERSION_MINOR >= 3))
@@ -858,6 +859,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
    gst_base_sink_set_async_enabled(GST_BASE_SINK(sink), TRUE);
 
+   sink->processSendEvent= processSendEventSinkSoc;
    sink->processPadEvent= processEventSinkSoc;
    sink->acquireResources= sinkAcquireVideo;
    sink->releaseResources= sinkReleaseVideo;
@@ -1446,6 +1448,15 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
          {
             updateClientPlaySpeed(sink, sink->playbackRate, TRUE);
          }
+      }
+
+      NEXUS_VideoDecoderSettings settings;
+      NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &settings);
+      settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eMuteUntilFirstPicture;
+      GST_INFO_OBJECT(sink, "settings.channelChangeMode %d", settings.channelChangeMode);
+      if ( NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings) )
+      {
+         GST_ERROR("gst_westeros_sink_soc_paused_to_playing: NEXUS_SimpleVideoDecoder_SetSettings failed");
       }
 
       if ( checkIndependentVideoClock( sink ) )
@@ -3471,6 +3482,60 @@ static void setDecodeMode( GstWesterosSink *sink )
    NEXUS_SimpleVideoDecoder_SetTrickState(sink->soc.videoDecoder, &trickState);
 }
 
+static void frameStep(GstWesterosSink *sink)
+{
+   if ( sink->videoStarted && !sink->soc.videoPlaying && sink->soc.stcChannel )
+   {
+      NEXUS_VideoDecoderTrickState trickState;
+      NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
+      if ( trickState.rate != 0 )
+      {
+         // trick rate needs to be 0 for Nexus frame advance to work
+         trickState.rate= 0;
+         NEXUS_Error rc = NEXUS_SimpleVideoDecoder_SetTrickState(sink->soc.videoDecoder, &trickState);
+         if ( NEXUS_SUCCESS != rc )
+         {
+            GST_ERROR_OBJECT(sink, "Error NEXUS_SimpleVideoDecoder_SetTrickState: %d", (int)rc);
+         }
+      }
+
+      GST_LOG("calling FrameAdvance");
+      if ( NEXUS_SimpleVideoDecoder_FrameAdvance(sink->soc.videoDecoder) )
+      {
+         GST_ERROR_OBJECT(sink, "Error NEXUS_SimpleVideoDecoder_FrameAdvance");
+      }
+      sink->soc.videoPlaying= TRUE;
+      UNLOCK( sink );
+      updateVideoStatus(sink);
+      LOCK( sink );
+      sink->soc.videoPlaying= FALSE;
+   }
+}
+
+static gboolean processSendEventSinkSoc(GstWesterosSink *sink, GstEvent *event, gboolean *passToDefault )
+{
+   gboolean result= FALSE;
+
+   GST_LOG("event %s", GST_EVENT_TYPE_NAME(event));
+
+   switch (GST_EVENT_TYPE(event))
+   {
+      case GST_EVENT_STEP:
+         {
+            LOCK( sink );
+            frameStep(sink);
+            UNLOCK( sink );
+            *passToDefault= FALSE;
+            result= true;
+         }
+         break;
+      default:
+         break;
+   }
+
+   return result;
+}
+
 static gboolean processEventSinkSoc(GstWesterosSink *sink, GstPad *pad, GstEvent *event, gboolean *passToDefault )
 {
    gboolean result= FALSE;
@@ -3610,33 +3675,11 @@ static GstFlowReturn prerollSinkSoc(GstBaseSink *base_sink, GstBuffer *buffer)
                GST_INFO_OBJECT(sink, "enable TsmMode");
             }
          }
-
-         if ( sink->videoStarted && !sink->soc.videoPlaying )
-         {
-            NEXUS_Error rc;
-
-            updateClientPlaySpeed( sink, 0.0, GST_STATE(GST_ELEMENT(sink)) == GST_STATE_PLAYING );
-
-            if ( sink->soc.frameStepOnPreroll )
-            {
-               rc= NEXUS_SimpleVideoDecoder_FrameAdvance(sink->soc.videoDecoder);
-               if ( NEXUS_SUCCESS != rc )
-               {
-                  GST_ERROR_OBJECT(sink, "prerollSinkSoc: Error NEXUS_SimpleVideoDecoder_FrameAdvance: %d", (int)rc);
-               }
-               sink->soc.videoPlaying= TRUE;
-               UNLOCK( sink );
-               updateVideoStatus(sink);
-               LOCK( sink );
-               sink->soc.videoPlaying= FALSE;
-            }
-         }
          UNLOCK( sink );
       }
    }
 
 done:
-   if ( !sink->soc.frameStepOnPreroll )
    {
       /* Set need_preroll to FALSE so that base sink will not block in
          wait_preroll since this would prevent further buffering while in
@@ -4597,7 +4640,7 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       // Don't enable zeroDelayOutputMode since this combined with
       // NEXUS_VideoDecoderTimestampMode_eDisplay will cause the capture
       // to omit all out of order frames (ie. all B-Frames)
-      settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eMuteUntilFirstPicture;
+      settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eMute;  // mute until TSM to prevent display in paused/framestep case, NF VPEEK
       settings.ptsOffset= sink->soc.ptsOffset;
       settings.fifoEmpty.callback= sink->soc.useImmediateOutput ? NULL : underflowCallback;
       settings.fifoEmpty.context= sink;

@@ -1394,7 +1394,7 @@ static bool testCaseSocSinkFrameAdvance( EMCTX *emctx )
          goto exit;
       }
       g_print("%d position %" GST_TIME_FORMAT " expected %" GST_TIME_FORMAT "\n", i, GST_TIME_ARGS(pos), GST_TIME_ARGS(posExpected));
-      if ( (pos < 0.9*posExpected) || (pos > 1.1*posExpected) )
+      if ( (pos < posExpected-17000000LL) || (pos > posExpected+17000000LL) )
       {
          gst_element_set_state( pipeline, GST_STATE_NULL );
          EMERROR("Position out of range: expected %" GST_TIME_FORMAT " actual %" GST_TIME_FORMAT, GST_TIME_ARGS(posExpected), GST_TIME_ARGS(pos));

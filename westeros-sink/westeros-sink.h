@@ -62,6 +62,7 @@ typedef struct _GstWesterosSink GstWesterosSink;
 typedef struct _GstWesterosSinkClass GstWesterosSinkClass;
 
 typedef gboolean (*ProcessPadEvent)(GstWesterosSink *sink, GstPad *pad, GstEvent *event, gboolean *passToDefault);
+typedef gboolean (*ProcessSendEvent)(GstWesterosSink *sink, GstEvent *event, gboolean *passToDefault);
 
 typedef int (*SinkAcquireResources)( GstWesterosSink *sink );
 typedef void (*SinkReleaseResources)( GstWesterosSink *sink );
@@ -202,6 +203,7 @@ struct _GstWesterosSink
    SinkSWDisplay swDisplay;
    #endif
 
+   ProcessSendEvent processSendEvent;
    ProcessPadEvent processPadEvent;
 
    void *mediaCaptureModule;

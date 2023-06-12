@@ -80,6 +80,7 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
 static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
 static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, GstStateChange transition);
 static gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query);
+static gboolean gst_westeros_sink_send_event (GstElement * element, GstEvent * event);
 static gboolean gst_westeros_sink_start(GstBaseSink *base_sink);
 static gboolean gst_westeros_sink_stop(GstBaseSink *base_sink);
 static gboolean gst_westeros_sink_unlock(GstBaseSink *base_sink);
@@ -1059,6 +1060,7 @@ static void gst_westeros_sink_class_init(GstWesterosSinkClass *klass)
    
    gstelement_class->change_state= gst_westeros_sink_change_state;
    gstelement_class->query= gst_westeros_sink_query;
+   gstelement_class->send_event= gst_westeros_sink_send_event;
    
    gstbasesink_class->start= GST_DEBUG_FUNCPTR (gst_westeros_sink_start);
    gstbasesink_class->stop= GST_DEBUG_FUNCPTR (gst_westeros_sink_stop);
@@ -1262,6 +1264,7 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    sink->display= 0;
    sink->currentSegment = NULL;
 
+   sink->processSendEvent= 0;
    sink->processPadEvent= 0;
 
    sink->rm= 0;
@@ -1842,6 +1845,27 @@ static gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query)
       default:
          return GST_ELEMENT_CLASS(parent_class)->query (element, query);
    }
+}
+
+static gboolean gst_westeros_sink_send_event(GstElement *element, GstEvent *event)
+{
+   GstWesterosSink *sink= GST_WESTEROS_SINK(element);
+   gboolean result= TRUE;
+   gboolean passToDefault= TRUE;
+
+   GST_LOG_OBJECT(sink,"event %s",GST_EVENT_TYPE_NAME(event));
+
+   if ( sink->processSendEvent )
+   {
+      result= sink->processSendEvent( sink, event, &passToDefault );
+   }
+
+   if (passToDefault)
+   {
+      return GST_ELEMENT_CLASS(parent_class)->send_event (element, event);
+   }
+
+   return result;
 }
 
 static gboolean gst_westeros_sink_start(GstBaseSink *base_sink)
