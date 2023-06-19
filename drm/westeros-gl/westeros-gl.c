@@ -52,6 +52,10 @@
 #include "linux/dma-buf.h"
 #endif
 
+#ifdef USE_EXTERNAL_STATS
+#include "xternal-stats.h"
+#endif
+
 #define INT_FATAL(FORMAT, ...)      wstLog(0, "FATAL: %s:%d " FORMAT "\n", __FILE__, __LINE__, __VA_ARGS__)
 #define INT_ERROR(FORMAT, ...)      wstLog(0, "ERROR: %s:%d " FORMAT "\n", __FILE__, __LINE__, __VA_ARGS__)
 #define INT_WARNING(FORMAT, ...)    wstLog(1, "WARN: %s:%d " FORMAT "\n", __FILE__, __LINE__, __VA_ARGS__)
@@ -660,6 +664,9 @@ static void avProgInit()
 
 static void avProgLog( long long nanoTime, int syncGroup, const char *edge, const char *desc )
 {
+   #ifdef USE_EXTERNAL_STATS
+   XSTAT_MARK_EVENT(nanoTime, syncGroup, 'V', edge, desc);
+   #endif
    if ( gAvProgOut )
    {
       struct timespec tp;
@@ -3754,6 +3761,9 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
    {
       vfm->resetBaseTime= true;
    }
+   #ifdef USE_EXTERNAL_STATS
+   XSTAT_SET_SYNC_PARAMS(vfm->conn->videoResourceId, vfm->conn->syncType);
+   #endif
    #ifdef WESTEROS_GL_AVSYNC
    if ( vfm->sync )
    {
@@ -3775,6 +3785,10 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
             {
                DEBUG("underflow: frame expired, queue size 1");
                underflow= true;
+               #ifdef USE_EXTERNAL_STATS
+               avProgLog(f->frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "underflow: frame expired, queue size 1");
+               XSTAT_INC_Q_UNDERFLOW_METRIC(vfm->conn->videoResourceId);
+               #endif
             }
             else
             {
@@ -3783,6 +3797,14 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
                {
                   DEBUG("underflow: frame expired, queue size %d gap %lld us", vfm->queueSize, frameGap );
                   underflow= true;
+                  #ifdef USE_EXTERNAL_STATS
+                  {
+                     char buf[96];
+                     snprintf(buf, 96, "underflow: frame expired, queue size %d gap %lld us", vfm->queueSize, frameGap);
+                     avProgLog(f->frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", buf);
+                     XSTAT_INC_GAP_UNDERFLOW_METRIC(vfm->conn->videoResourceId);
+                  }
+                  #endif
                }
             }
             if ( underflow )
@@ -3825,11 +3847,14 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
             {
                if ( vfm->bufferIdCurrent != f->bufferId )
                {
-                  avProgLog( f->frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "drop");
+                  avProgLog( f->frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "drop: immediate output");
                   FRAME("  drop frame %d buffer %d", f->frameNumber, f->bufferId);
                   vfm->dropFrameCount += 1;
                   f->dropped= true;
                   wstOffloadSendBufferRelease(vfm->conn, f );
+                  #ifdef USE_EXTERNAL_STATS
+                  XSTAT_INC_Q_DROP_METRIC(vfm->conn->videoResourceId);
+                  #endif
                }
                memmove( &vfm->queue[0], &vfm->queue[1], (vfm->queueSize-(1))*sizeof(VideoFrame) );
                --vfm->queueSize;
@@ -3873,11 +3898,14 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
                {
                   if ( fCheck->bufferId != vfm->bufferIdCurrent )
                   {
-                     avProgLog( fCheck->frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "drop");
+                     avProgLog( fCheck->frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "drop: PTS late");
                      FRAME("  drop frame %d buffer %d", fCheck->frameNumber, fCheck->bufferId);
                      vfm->dropFrameCount += 1;
                      fCheck->dropped= true;
                      wstOffloadSendBufferRelease(vfm->conn, fCheck);
+                     #ifdef USE_EXTERNAL_STATS
+                     XSTAT_INC_PTS_LATE_DROP_METRIC(vfm->conn->videoResourceId);
+                     #endif
                   }
                   pthread_mutex_lock( &vfm->mutex);
                   if ( vfm->queueSize > i+1 )
@@ -3939,16 +3967,32 @@ done:
       #endif
       vfm->underflowDetected= true;
       INFO("underflow detected video plane %p", vfm->conn->videoPlane);
+      #ifdef USE_EXTERNAL_STATS
+      avProgLog( vfm->conn->videoPlane->videoFrame[FRAME_CURR].frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "underflow");
+      XSTAT_INC_UNDERRUN_METRIC(vfm->conn->videoResourceId);
+      #endif
    }
    if ( f )
    {
       vfm->underflowReported= false;
       if ( vfm->bufferIdCurrent == f->bufferId )
       {
+         #ifdef USE_EXTERNAL_STATS
+         avProgLog( vfm->conn->videoPlane->videoFrame[FRAME_CURR].frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "frc");
+         XSTAT_INC_FRC_METRIC(vfm->conn->videoResourceId);
+         #else
          avProgLog( vfm->conn->videoPlane->videoFrame[FRAME_CURR].frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "hold");
+         #endif
       }
       vfm->bufferIdCurrent= f->bufferId;
    }
+   #ifdef USE_EXTERNAL_STATS
+   else
+   {
+      avProgLog( vfm->conn->videoPlane->videoFrame[FRAME_CURR].frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "repeat");
+      XSTAT_INC_REPEAT_METRIC(vfm->conn->videoResourceId);
+   }
+   #endif
    return f;
 }
 
@@ -5675,12 +5719,19 @@ static void *wstRefreshThread( void *arg )
             refreshInterval= (1000000LL+(ctx->modeInfo->vrefresh/2))/ctx->modeInfo->vrefresh;
          }
          wstReleasePreviousBuffers( ctx );
+         #ifdef USE_EXTERNAL_STATS
+         XSTAT_RESET_METRICS();
+         XSTAT_SET_SYNC_FRAMERATE(ctx->modeInfo->vrefresh);
+         #endif
          if ( wstCheckPlanes( ctx, vblankTime, refreshInterval ) )
          {
             TRACE3("refresh thread calling wstSwapDRMBuffers");
             wstSwapDRMBuffers( ctx );
             delay= 3LL*refreshInterval/4LL;
          }
+         #ifdef USE_EXTERNAL_STATS
+         XSTAT_SAVE_METRICS();
+         #endif
          #ifdef USE_REFRESH_LOCK
          if ( g_useRefreshLock )
          {
@@ -6526,6 +6577,9 @@ static void wstSwapDRMBuffersAtomic( WstGLCtx *ctx )
 
                   FRAME("commit frame %d buffer %d", iter->videoFrame[FRAME_CURR].frameNumber, iter->videoFrame[FRAME_CURR].bufferId);
                   avProgLog( iter->videoFrame[FRAME_CURR].frameTime*1000LL, iter->videoResourceId, "WtoD", wstDispFullness(iter->vfm));
+                  #ifdef USE_EXTERNAL_STATS
+                  XSTAT_INC_DISPLAYED_METRIC(iter->videoResourceId);
+                  #endif
                }
             }
          }

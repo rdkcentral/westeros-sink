@@ -154,7 +154,10 @@ void *sync_free_frame( struct vframe *vf )
       {
          if ( fCheck->canExpire )
          {
-            avProgLog( fCheck->frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "drop");
+            #ifdef USE_EXTERNAL_STATS
+            XSTAT_INC_SYNC_FREE_DROP(vfm->conn->videoResourceId);
+            #endif
+            avProgLog( fCheck->frameTime*1000LL, vfm->conn->videoResourceId, "WtoD", "drop: sync free");
             fCheck->vf= 0;
             vfm->dropFrameCount += 1;
             fCheck->dropped= true;
