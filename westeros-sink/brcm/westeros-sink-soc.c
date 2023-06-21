@@ -2360,7 +2360,7 @@ static gpointer captureThread(gpointer data)
       sink->soc.decodeError= TRUE;
       UNLOCK( sink );
 
-      if ( emitEOS )
+      if ( emitEOS && (GST_BASE_SINK(sink)->need_preroll == FALSE) )
       {
          gst_westeros_sink_eos_detected( sink );
       }

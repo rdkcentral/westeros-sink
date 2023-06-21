@@ -2939,6 +2939,7 @@ NEXUS_Error NEXUS_SimpleVideoDecoder_GetStatus(
    pStatus->numBytesDecoded= dec->frameNumber*1000;
    pStatus->numDecodeErrors= dec->numDecodeErrors;
    pStatus->numDisplayDrops= 0;
+   pStatus->fifoDepth= 1;
 
 exit:
    return rc;
