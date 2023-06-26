@@ -26,6 +26,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <sys/prctl.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -700,6 +701,87 @@ static char *wstDispFullness( VideoFrameManager *vfm )
       return desc;
    }
    return NULL;
+}
+
+static int wstSetThreadNameAndPriority(const char *threadName, const char *env, int defaultPolicy, int defaultPriority)
+{
+   int rc= -1;
+   int priority= defaultPriority;
+   int policy= defaultPolicy;
+   const char *policyName;
+   char name[16];
+
+   if ( threadName )
+   {
+      snprintf(name, 16, threadName);
+      prctl(PR_SET_NAME, name, 0, 0, 0);
+   }
+
+   /* get env settings from file for envName */
+   if ( env )
+   {
+      const char *envVal= getenv(env);
+      if (envVal)
+      {
+         int len, c;
+         len= strlen(envVal);
+         if ( (len >= 3) && (envVal[1]==',') )
+         {
+            /* parse thread policy value */
+            c= envVal[0];
+            switch( c )
+            {
+               case 'o':
+               case 'O':
+               default:
+                  policy= SCHED_OTHER;
+                  break;
+               case 'f':
+               case 'F':
+                  policy= SCHED_FIFO;
+                  break;
+               case 'r':
+               case 'R':
+                  policy= SCHED_RR;
+                  break;
+            }
+            /* get thread priority value */
+            priority = atoi(envVal+2);
+         }
+      }
+   }
+   if(policy != -1)
+   {
+      struct sched_param param;
+      memset( &param, 0, sizeof(param) );
+      param.sched_priority= priority;
+      if ( threadName && env )
+      {
+         switch( policy )
+         {
+            case SCHED_OTHER:
+               policyName= "SCHED_OTHER";
+               break;
+            case SCHED_FIFO:
+               policyName= "SCHED_FIFO";
+               break;
+            case SCHED_RR:
+               policyName= "SCHED_RR";
+               break;
+            default:
+               policy= SCHED_FIFO;
+               policyName= "SCHED_FIFO";
+               break;
+         }
+         INFO("set %s thread to policy %s (%d) priority %d", threadName, policyName, policy, priority);
+      }
+      rc= pthread_setschedparam(pthread_self(), policy, &param);
+      if ( rc )
+      {
+         ERROR("failed to set thread policy and priority: %d errno %d", rc, errno);
+      }
+   }
+   return rc;
 }
 
 static void wstOffloadSendBufferRelease( VideoServerConnection *conn, VideoFrame* f)
@@ -1721,6 +1803,8 @@ static void *wstVideoServerConnectionThread( void *arg )
 
    DEBUG("wstVideoServerConnectionThread: enter");
 
+   wstSetThreadNameAndPriority("wstVServerConn", "WESTEROS_GL_VSERVER_CONN_PRIORITY", SCHED_OTHER, 0);
+
    conn->zoomMode= -1;
    conn->zoomPolicyVersion= -1;
    conn->videoDebugLevel= -1;
@@ -2438,6 +2522,8 @@ static void *wstVideoServerThread( void *arg )
    VideoServerCtx *server= (VideoServerCtx*)arg;
 
    DEBUG("wstVideoServerThread: enter");
+
+   wstSetThreadNameAndPriority("wstVServer", NULL, SCHED_OTHER, 0);
 
    while( !server->server->threadStopRequested )
    {
@@ -3233,6 +3319,8 @@ static void *wstDisplayServerConnectionThread( void *arg )
 
    DEBUG("wstDisplayServerConnectionThread: enter");
 
+   wstSetThreadNameAndPriority("wstDispServerC", NULL, SCHED_OTHER, 0);
+
    conn->threadStarted= true;
    while( !conn->threadStopRequested )
    {
@@ -3403,6 +3491,8 @@ static void *wstDisplayServerThread( void *arg )
    DisplayServerCtx *server= (DisplayServerCtx*)arg;
 
    DEBUG("wstDisplayServerThread: enter");
+
+   wstSetThreadNameAndPriority("wstDispServer", NULL, SCHED_OTHER, 0);
 
    while( !server->server->threadStopRequested )
    {
@@ -5627,72 +5717,11 @@ static void *wstRefreshThread( void *arg )
    long long delay;
    long long refreshInterval= 0LL;
    long long vblankTime= 0LL;
-   const char *env, *policyName;
-   int policy= SCHED_FIFO;
-   int priority= 1;
-   int rc;
-   struct sched_param schedParam;
 
    DEBUG("refresh thread start");
    ctx->refreshThreadStarted= true;
 
-   env= getenv("WESTEROS_GL_REFRESH_PRIORITY");
-   if ( env )
-   {
-      int len, c;
-      len= strlen(env);
-      if ( (len >= 3) && (env[1]==',') )
-      {
-         c= env[0];
-         switch( c )
-         {
-            case 'o':
-            case 'O':
-               policy= SCHED_OTHER;
-               break;
-            case 'f':
-            case 'F':
-            default:
-               policy= SCHED_FIFO;
-               break;
-            case 'r':
-            case 'R':
-               policy= SCHED_RR;
-               break;
-         }
-         priority= atoi(env+2);
-      }
-   }
-   switch( policy )
-   {
-      case SCHED_OTHER:
-         policyName= "SCHED_OTHER";
-         break;
-      case SCHED_FIFO:
-         policyName= "SCHED_FIFO";
-         break;
-      case SCHED_RR:
-         policyName= "SCHED_RR";
-         break;
-      default:
-         policy= SCHED_FIFO;
-         policyName= "SCHED_FIFO";
-         break;
-   }
-   INFO("set refresh thread to policy %s (%d) priority %d", policyName, policy, priority);
-   if ( policy == SCHED_OTHER )
-   {
-      rc= setpriority( PRIO_PROCESS, 0, priority );
-   }
-   else
-   {
-      schedParam.sched_priority= priority;
-      rc= pthread_setschedparam( pthread_self(), policy, &schedParam );
-   }
-   if ( rc )
-   {
-      ERROR("failed to set refresh thread policy and priority: %d errno %d", rc, errno);
-   }
+   wstSetThreadNameAndPriority("wstRefresh", "WESTEROS_GL_REFRESH_PRIORITY", SCHED_RR, 70);
 
    while( !ctx->refreshThreadStopRequested )
    {
@@ -5811,6 +5840,8 @@ static void *wstOffloadThread( void *arg )
 
    pMsgQ= &ctx->offloadMsgQ;
    DEBUG("offload thread started");
+
+   wstSetThreadNameAndPriority("wstOffload", "WESTEROS_GL_OFFLOAD_PRIORITY", SCHED_OTHER, 0);
 
    ctx->offloadThreadStarted= true;
    while ( !ctx->offloadThreadStopRequested )

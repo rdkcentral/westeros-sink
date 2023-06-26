@@ -54,6 +54,7 @@ KMS+V4L2
   WESTEROS_GL_NO_PLANES
   WESTEROS_GL_NO_VBLANK
   WESTEROS_GL_NO_VIDEOSERVER
+  WESTEROS_GL_OFFLOAD_PRIORITY
   WESTEROS_GL_REFRESH_PRIORITY
   WESTEROS_GL_USE_AMLOGIC_AVSYNC
   WESTEROS_GL_USE_GBM_MODIFIERS
@@ -62,6 +63,7 @@ KMS+V4L2
   WESTEROS_GL_USE_PREFERRED_MODE
   WESTEROS_GL_USE_REFRESH_LOCK
   WESTEROS_GL_USE_UEVENT_HOTPLUG
+  WESTEROS_GL_VSERVER_CONN_PRIORITY
   WESTEROS_SECURE_GRAPHICS
   WESTEROS_SINK_CLOCK
   WESTEROS_SINK_DEBUG_FRAME
@@ -859,6 +861,24 @@ Last modified: Jan 24, 2023
 
 
 
+WESTEROS_GL_OFFLOAD_PRIORITY
+-------------------------------------------------------------------------------
+Set offload thread priority.
+
+To set the scheduling priority of the offload thread define:
+
+export WESTEROS_GL_OFFLOAD_PRIORITY=<policy>,<priority>
+
+in the env of the process acting as the DRM (Direct Rendering Manager) master
+process where <policy> is one of O (SCHED_OTHER), F (SCHED_FIFO), or R
+(SCHED_RR), and <priority> is an integer value.  For example F,2 or R,5.  By
+default the priority used is the equivalent of specifying O,0.
+
+Last modified: June 26, 2023
+
+
+
+
 WESTEROS_GL_REFRESH_PRIORITY
 -------------------------------------------------------------------------------
 Set refresh thread priority.
@@ -870,9 +890,9 @@ export WESTEROS_GL_REFRESH_PRIORITY=<policy>,<priority>
 in the env of the process acting as the DRM (Direct Rendering Manager) master
 process where <policy> is one of O (SCHED_OTHER), F (SCHED_FIFO), or R
 (SCHED_RR), and <priority> is an integer value.  For example F,2 or R,5.  By
-default the priority used is the equivalent of specifying F,1.
+default the priority used is the equivalent of specifying R,70.
 
-Last modified: Jan 25, 2023
+Last modified: June 26, 2023
 
 
 
@@ -995,6 +1015,24 @@ in the env of the process acting as the DRM (Direct Rendering Manager) master
 process.  This is only applicable for STB devices.
 
 Last modified: Jan 19, 2023
+
+
+
+
+WESTEROS_GL_VSERVER_CONN_PRIORITY
+-------------------------------------------------------------------------------
+Set video connection thread priority.
+
+To set the scheduling priority of video connection threads define:
+
+export WESTEROS_GL_VSERVER_CONN_PRIORITY=<policy>,<priority>
+
+in the env of the process acting as the DRM (Direct Rendering Manager) master
+process where <policy> is one of O (SCHED_OTHER), F (SCHED_FIFO), or R
+(SCHED_RR), and <priority> is an integer value.  For example F,2 or R,5.  By
+default the priority used is the equivalent of specifying O,0.
+
+Last modified: June 26, 2023
 
 
 
