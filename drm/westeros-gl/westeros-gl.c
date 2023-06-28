@@ -7620,11 +7620,7 @@ bool WstGLSetDisplayMode( WstGLCtx *ctx, const char *mode )
 
       DEBUG("WstGLSetDisplayMode: mode (%s)", mode);
 
-      if ( sscanf( mode, "%dx%dx%d", &width, &height, &rate ) == 3 )
-      {
-         interlaced= false;
-      }
-      else if ( sscanf( mode, "%dx%dp%d", &width, &height, &rate ) == 3 )
+      if ( sscanf( mode, "%dx%dp%d", &width, &height, &rate ) == 3 )
       {
          interlaced= false;
       }
@@ -7632,16 +7628,36 @@ bool WstGLSetDisplayMode( WstGLCtx *ctx, const char *mode )
       {
          interlaced= true;
       }
+      else if ( sscanf( mode, "%dx%dx%d", &width, &height, &rate ) == 3 )
+      {
+         interlaced= false;
+      }
       else if ( sscanf( mode, "%dx%d", &width, &height ) == 2 )
       {
          int len= strlen(mode);
          interlaced= (mode[len-1] == 'i');
+      }
+      else if (sscanf( mode, "%dp%dhz", &height, &rate ) == 2 )
+      {
+          interlaced= false;
+          width= -1;
+      }
+      else if (sscanf( mode, "%di%dhz", &height, &rate ) == 2 )
+      {
+         interlaced= true;
+         width= -1;
       }
       else if ( sscanf( mode, "%dp", &height ) == 1 )
       {
          int len= strlen(mode);
          interlaced= (mode[len-1] == 'i');
          width= -1;
+      }
+      else if (sscanf( mode, "smpte%dhz", &rate ) == 1 )
+      {
+         interlaced= false;
+         height= 2160;
+         width= 4096;
       }
       if ( height > 0 )
       {
@@ -7676,6 +7692,7 @@ bool WstGLSetDisplayMode( WstGLCtx *ctx, const char *mode )
             }
          }
       }
+      DEBUG("WstGLSetDisplayMode w %d h %d rate %d", width, height, rate);
       if ( rate >= 0 )
       {
          useBestRate= false;
