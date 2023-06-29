@@ -713,7 +713,7 @@ static int wstSetThreadNameAndPriority(const char *threadName, const char *env, 
 
    if ( threadName )
    {
-      snprintf(name, 16, threadName);
+      snprintf(name, 16, "%s", threadName);
       prctl(PR_SET_NAME, name, 0, 0, 0);
    }
 
@@ -3506,30 +3506,30 @@ static void *wstDisplayServerThread( void *arg )
       {
          if ( !server->server->threadStopRequested )
          {
+            int i;
             DisplayServerConnection *conn= 0;
-
             DEBUG("display server received connection: fd %d", fd);
-
+            pthread_mutex_lock( &server->server->mutex );
+            for( i= 0; i < MAX_DISPLAY_CONNECTIONS; ++i )
+            {
+               if ( server->connections[i] == 0 )
+               {
+                  break;
+               }
+            }
+            if ( i >= MAX_DISPLAY_CONNECTIONS )
+            {
+               ERROR("too many display connections");
+               close(fd);
+               pthread_mutex_unlock( &server->server->mutex );
+               continue;
+            }
+            pthread_mutex_unlock( &server->server->mutex );
             conn= wstCreateDisplayServerConnection( server, fd );
             if ( conn )
             {
-               int i;
+               server->connections[i]= conn;
                DEBUG("created display server connection %p for fd %d", conn, fd );
-               pthread_mutex_lock( &server->server->mutex );
-               for( i= 0; i < MAX_DISPLAY_CONNECTIONS; ++i )
-               {
-                  if ( conn->server->connections[i] == 0 )
-                  {
-                     conn->server->connections[i]= conn;
-                     break;
-                  }
-               }
-               if ( i >= MAX_DISPLAY_CONNECTIONS )
-               {
-                  ERROR("too many display connections");
-                  wstDestroyDisplayServerConnection( conn );
-               }
-               pthread_mutex_unlock( &server->server->mutex );
             }
             else
             {
