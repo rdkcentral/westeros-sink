@@ -8075,7 +8075,6 @@ void* WstGLCreateNativeWindow( WstGLCtx *ctx, int x, int y, int width, int heigh
             if ( modeSetPending )
             {
                ctx->modeNext= ctx->modeCurrent;
-               ctx->modeSetPending= true;
             }
             pthread_mutex_unlock( &gMutex );
          }
