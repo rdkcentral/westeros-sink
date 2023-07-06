@@ -2275,6 +2275,10 @@ static void *wstVideoServerConnectionThread( void *arg )
                                  {
                                     vfm->expireLimit= 1000000LL;
                                  }
+                                 else if ( rate < 24 )
+                                 {
+                                    vfm->expireLimit= (1000000LL*5LL)/rate;
+                                 }
                               }
                            }
                            pthread_mutex_unlock( &gMutex );
