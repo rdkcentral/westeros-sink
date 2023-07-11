@@ -6256,6 +6256,12 @@ static void wstSwapDRMBuffersAtomic( WstGLCtx *ctx )
       if ( ctx->haveNativeFence )
       {
       #endif
+         if( ctx->nativeOutputFenceFd != -1 )
+         {
+            DEBUG("wstSwapDRMBuffersAtomic:close native fence first %d",ctx->nativeOutputFenceFd);
+            close(ctx->nativeOutputFenceFd);
+            ctx->nativeOutputFenceFd= -1;
+         }
          wstAtomicAddProperty( ctx, req, ctx->crtc->crtc_id,
                                ctx->crtcProps->count_props, ctx->crtcPropRes,
                                "OUT_FENCE_PTR", (uint64_t)(unsigned long)(&ctx->nativeOutputFenceFd) );
