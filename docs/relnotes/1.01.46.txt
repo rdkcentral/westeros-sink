@@ -16,6 +16,7 @@ Changes:
 
 * sink, brcm: frame advance changes
 
+* core, essos: fallback to eglGetDisplay if eglGetPlatformDisplayEXT fails
 
 
 Depedencies
