@@ -157,6 +157,7 @@ typedef struct _EssRMgrClientConnection
    bool threadStopRequested;
    bool unauthorizedRequestsAbort;
    int timeoutMS;
+   pthread_mutex_t mutexNotify;
 } EssRMgrClientConnection;
 
 typedef enum _EssRMgrValue
@@ -2030,6 +2031,7 @@ static void essRMDestroyClientConnection( EssRMgrClientConnection *conn )
          free( info );
       }
 
+      pthread_mutex_destroy( &conn->mutexNotify );
       pthread_mutex_destroy( &conn->mutex );
 
       free( conn );
@@ -2054,6 +2056,7 @@ static EssRMgrClientConnection *essRMCreateClientConnection( EssRMgr *rm )
       conn->name= ESSRMGR_SERVER_NAME;
       conn->timeoutMS= DEFAULT_TIMEOUT_MS;
       pthread_mutex_init( &conn->mutex, 0 );
+      pthread_mutex_init( &conn->mutexNotify, 0 );
 
       workingDir= getenv("XDG_RUNTIME_DIR");
       if ( !workingDir )
@@ -4668,12 +4671,35 @@ exit:
    return result;
 }
 
+typedef struct _EssRMNotifyInfo
+{
+   sem_t semNotifyStart;
+   EssRMgrRequestInfo *info;
+} EssRMNotifyInfo;
+
 static void essRMInvokeNotify( EssRMgr *rm, int event, EssRMgrRequestInfo *info )
 {
    int rc;
    pthread_t threadId;
+   EssRMNotifyInfo *notifyInfo= 0;
    EssRMgrRequestInfo *copy= 0;
    pthread_attr_t attr;
+
+   notifyInfo= (EssRMNotifyInfo*)calloc( 1, sizeof(EssRMNotifyInfo));
+   if ( !notifyInfo )
+   {
+      ERROR("No memory for notify info");
+      goto exit;
+   }
+
+   rc= sem_init( &notifyInfo->semNotifyStart, 0, 0 );
+   if ( rc )
+   {
+      ERROR("failed to create semNotifyStart for request: %d error %d", rc, errno);
+      free( notifyInfo );
+      notifyInfo= 0;
+      goto exit;
+   }
 
    copy= (EssRMgrRequestInfo*)calloc( 1, sizeof(EssRMgrRequestInfo));
    if ( !copy )
@@ -4693,6 +4719,8 @@ static void essRMInvokeNotify( EssRMgr *rm, int event, EssRMgrRequestInfo *info 
 
    memcpy(&copy->req, &info->req, sizeof(EssRMgrRequest));
 
+   notifyInfo->info= copy;
+
    rc= pthread_attr_init( &attr );
    if ( rc )
    {
@@ -4709,7 +4737,7 @@ static void essRMInvokeNotify( EssRMgr *rm, int event, EssRMgrRequestInfo *info 
 
    copy->rm= rm;
    copy->value1= event;
-   rc= pthread_create( &threadId, &attr, essRMNotifyThread, copy );
+   rc= pthread_create( &threadId, &attr, essRMNotifyThread, notifyInfo );
    if ( rc )
    {
       ERROR("unable to start notify thread for event %d res type %d id %d", event, copy->req.type, copy->req.assignedId);
@@ -4719,11 +4747,22 @@ static void essRMInvokeNotify( EssRMgr *rm, int event, EssRMgrRequestInfo *info 
    rm->notifications.push_back( copy );
    copy= 0;
 
+   while ( true )
+   {
+      rc= sem_wait(&notifyInfo->semNotifyStart);
+      if ( (rc == 0) || (errno != EINTR) ) break;
+   }
+
 exit:
    if ( copy )
    {
       sem_destroy( &copy->semComplete );
       free( copy );
+   }
+   if ( notifyInfo )
+   {
+      sem_destroy( &notifyInfo->semNotifyStart );
+      free( notifyInfo );
    }
 
    return;
@@ -4731,16 +4770,23 @@ exit:
 
 static void* essRMNotifyThread( void *userData )
 {
-   EssRMgrRequestInfo *info= (EssRMgrRequestInfo*)userData;
-   if ( info )
+   EssRMNotifyInfo *notifyInfo= (EssRMNotifyInfo*)userData;
+   if ( notifyInfo )
    {
-      EssRMgr *rm= info->rm;
-      int event= info->value1;
-      DEBUG("calling notify callback");
-      info->req.notifyCB( rm, event, info->req.type, info->req.assignedId, info->req.notifyUserData );
-      DEBUG("done calling notify callback");
+      EssRMgrRequestInfo *info= (EssRMgrRequestInfo*)notifyInfo->info;
+      if ( info )
+      {
+         EssRMgr *rm= info->rm;
+         int event= info->value1;
+         pthread_mutex_lock( &rm->conn->mutexNotify );
+         sem_post( &notifyInfo->semNotifyStart );
+         DEBUG("calling notify callback");
+         info->req.notifyCB( rm, event, info->req.type, info->req.assignedId, info->req.notifyUserData );
+         DEBUG("done calling notify callback");
+         pthread_mutex_unlock( &rm->conn->mutexNotify );
 
-      sem_post( &info->semComplete );
+         sem_post( &info->semComplete );
+      }
    }
    return NULL;
 }
