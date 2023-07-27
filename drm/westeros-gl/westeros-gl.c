@@ -1439,6 +1439,7 @@ static void wstVideoServerFlush( VideoServerConnection *conn )
    int rc;
    int len;
    int expireLimit= 0;
+   bool paused= false;
    #ifdef USE_GENERIC_AVSYNC
    int avscFd;
    int avscSize;
@@ -1452,6 +1453,7 @@ static void wstVideoServerFlush( VideoServerConnection *conn )
    if ( conn->videoPlane->vfm )
    {
       expireLimit= conn->videoPlane->vfm->expireLimit;
+      paused= conn->videoPlane->vfm->paused;
       #ifdef USE_GENERIC_AVSYNC
       avscFd= conn->videoPlane->vfm->avscFd;
       avscSize= conn->videoPlane->vfm->avscSize;
@@ -1468,6 +1470,7 @@ static void wstVideoServerFlush( VideoServerConnection *conn )
    if ( conn->videoPlane->vfm )
    {
       conn->videoPlane->vfm->expireLimit= expireLimit;
+      conn->videoPlane->vfm->paused= paused;
       #ifdef USE_GENERIC_AVSYNC
       conn->videoPlane->vfm->avscFd= avscFd;
       conn->videoPlane->vfm->avscSize= avscSize;
