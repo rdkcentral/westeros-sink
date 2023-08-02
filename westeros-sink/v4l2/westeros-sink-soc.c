@@ -2142,11 +2142,17 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
                if ( (buffIndex < 0) && !sink->flushStarted )
                {
                   GST_ERROR("gst_westeros_sink_soc_render: unable to get input buffer");
+                  #ifdef USE_GST1
+                  gst_buffer_unmap( buffer, &map);
+                  #endif
                   goto exit;
                }
 
                if ( sink->flushStarted )
                {
+                  #ifdef USE_GST1
+                  gst_buffer_unmap( buffer, &map);
+                  #endif
                   goto exit;
                }
 
@@ -2154,6 +2160,9 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
                if ( !sink->soc.inBuffers )
                {
                   UNLOCK(sink);
+                  #ifdef USE_GST1
+                  gst_buffer_unmap( buffer, &map);
+                  #endif
                   goto exit;
                }
                start= (guint8*)sink->soc.inBuffers[buffIndex].start;
@@ -2194,6 +2203,9 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
                {
                   UNLOCK(sink);
                   GST_ERROR("gst_westeros_sink_soc_render: queuing input buffer failed: rc %d errno %d", rc, errno );
+                  #ifdef USE_GST1
+                  gst_buffer_unmap( buffer, &map);
+                  #endif
                   goto exit;
                }
                ++sink->soc.inQueuedCount;
