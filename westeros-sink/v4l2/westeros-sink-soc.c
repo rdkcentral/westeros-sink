@@ -109,6 +109,7 @@ enum
   PROP_ENABLE_TEXTURE,
   PROP_REPORT_DECODE_ERRORS,
   PROP_QUEUED_FRAMES,
+  PROP_VFRAME_SOURCE_TYPE,
   PROP_STOP_KEEP_FRAME,
   PROP_STATS
 };
@@ -723,6 +724,12 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
                            "immediate output mode",
                            "Decoded frames are output with minimum delay. B frames are dropped.", FALSE, G_PARAM_READWRITE));
 
+   g_object_class_install_property (gobject_class, PROP_VFRAME_SOURCE_TYPE,
+     g_param_spec_boolean ("vframe-source-type",
+                           "receive vframe source type",
+                           "Distinguish vframe source type. true: dtv, false: others", FALSE, G_PARAM_READWRITE));
+
+
    g_object_class_install_property (gobject_class, PROP_STOP_KEEP_FRAME,
      g_param_spec_boolean ("stop-keep-frame",
                            "keep last frame on stop",
@@ -948,6 +955,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.framesBeforeHideGfx= 0;
    sink->soc.prevFrameTimeGfx= 0;
    sink->soc.prevFramePTSGfx= 0;
+   sink->soc.isSourceDTV= FALSE;
    sink->soc.videoX= sink->windowX;
    sink->soc.videoY= sink->windowY;
    sink->soc.videoWidth= sink->windowWidth;
@@ -1252,6 +1260,12 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             sink->soc.useImmediateOutput= g_value_get_boolean(value);
             break;
          }
+      case PROP_VFRAME_SOURCE_TYPE:
+         {
+            sink->soc.isSourceDTV= g_value_get_boolean(value);
+            GST_DEBUG("set isSourceDTV %d", sink->soc.isSourceDTV);
+            break;
+         }
       case PROP_STOP_KEEP_FRAME:
          {
             bool keep= g_value_get_boolean(value);
@@ -1346,6 +1360,9 @@ void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *
          break;
       case PROP_IMMEDIATE_OUTPUT:
          g_value_set_boolean(value, sink->soc.useImmediateOutput);
+         break;
+      case PROP_VFRAME_SOURCE_TYPE:
+         g_value_set_boolean(value, sink->soc.isSourceDTV);
          break;
       case PROP_STOP_KEEP_FRAME:
          g_value_set_boolean(value, sink->soc.keepLastFrame);

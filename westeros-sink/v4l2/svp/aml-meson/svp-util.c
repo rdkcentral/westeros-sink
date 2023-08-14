@@ -65,6 +65,7 @@ struct aml_vdec_cfg_infos
    uint32_t low_latency_mode;
    uint32_t uvm_hook_type;
    /*
+    * bit 20       : vframe source type flag. 1:dtv 0:others
     * bit 16       : force progressive output flag.
     * bit 15       : enable nr.
     * bit 14       : enable di local buff.
@@ -228,6 +229,19 @@ static void wstSVPDecoderConfig( GstWesterosSink *sink )
    {
       GST_DEBUG("enable low latency mode");
       decParm->cfg.low_latency_mode= 1;
+   }
+
+   /*set bit20 value 1 ：receive vframe source type dtv
+    *set bit20 value 0 ：receive vframe source type others */
+   if ( sink->soc.isSourceDTV)
+   {
+      GST_DEBUG("receive vframe source type is dtv");
+      decParm->cfg.metadata_config_flag |= (1 << 20);
+   }
+   else
+   {
+      GST_DEBUG("receive vframe source type is others");
+      decParm->cfg.metadata_config_flag |= (0 << 20);
    }
 
    /*set bit12 value to 1,

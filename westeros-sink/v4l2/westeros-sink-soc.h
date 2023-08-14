@@ -184,6 +184,7 @@ struct _GstWesterosSinkSoc
    gboolean useImmediateOutput;
    gboolean keepLastFrame;
    gboolean keepLastFrameChanged;
+   gboolean isSourceDTV;
    int zoomMode;
    int zoomModeUser;
    int overscanSize;
