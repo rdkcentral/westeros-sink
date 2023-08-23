@@ -2261,6 +2261,11 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
             {
                GST_DEBUG("Setup output prior to source change for (%s)", sink->soc.caps.driver);
                wstSetupOutput( sink );
+               if ( sink->soc.havePixelAspectRatio )
+               {
+                  sink->soc.pixelAspectRatioChanged= TRUE;
+                  sink->soc.pixelAspectRatio= wstPopPixelAspectRatio( sink );
+               }
             }
          }
 
