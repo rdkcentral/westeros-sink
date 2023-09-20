@@ -490,6 +490,7 @@ static WstRendererEMB* wstRendererEMBCreate( WstRenderer *renderer )
       rendererEMB->renderer= renderer;
       rendererEMB->surfaces= std::vector<WstRenderSurface*>();
       rendererEMB->deadTextures= std::vector<GLuint>();
+      rendererEMB->baseZOrder= 0.5;
       
       #if defined (WESTEROS_PLATFORM_EMBEDDED)
       rendererEMB->glCtx= WstGLInit();
