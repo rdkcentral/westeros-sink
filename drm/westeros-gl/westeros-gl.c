@@ -212,6 +212,7 @@ typedef struct _VideoFrame
    bool canExpire;
    bool dropped;
    bool advanced;
+   bool kept;
    uint32_t fbId;
    uint32_t handle0;
    uint32_t handle1;
@@ -382,6 +383,7 @@ typedef struct _WstOffloadVideoFrameResources
    uint32_t handle1;
    void *vf;
    bool dropped;
+   bool kept;
 } WstOffloadVideoFrameResources;
 
 typedef struct _WstOffloadMsg
@@ -811,6 +813,7 @@ static void wstOffloadSendBufferRelease( VideoServerConnection *conn, VideoFrame
       r->handle0 = f->handle0;
       r->handle1 = f->handle1;
       r->dropped= f->dropped;
+      r->kept= f->kept;
       wstOffloadMsgPush(WST_OLM_BUFF_RELEASE, conn, 0, f->bufferId, r);
    }
    f->fd0= -1;
@@ -821,6 +824,7 @@ static void wstOffloadSendBufferRelease( VideoServerConnection *conn, VideoFrame
    f->handle0= 0;
    f->handle1= 0;
    f->dropped= false;
+   f->kept= false;
 }
 
 static void wstOffloadSendStatus( VideoServerConnection *conn, VideoFrameManager *vfm, long long displayedFrameTime, int dropFrameCount )
@@ -870,7 +874,7 @@ static void wstOffloadFreeVideoFrameResources(WstOffloadVideoFrameResources *f )
       if ( f->fd0 >= 0 )
       {
          #ifdef DRM_USE_VIDEO_FENCE
-         if ( !f->dropped )
+         if ( !f->dropped && !f->kept )
          {
             struct dma_buf_export_sync_file dma_fence;
             int rc= -1;
@@ -1188,7 +1192,8 @@ static void wstOverlayFree( WstOverlayPlanes *planes, WstOverlayPlane *overlay )
          overlay->videoFrame[i].plane= 0;
          if ( (i == FRAME_CURR) && overlay->keepLastFrame )
          {
-            DEBUG("keeping last frame: when replacement frame is displayed");
+            DEBUG("keeping last frame: release when replacement frame is displayed");
+            overlay->videoFrame[i].kept= true;
             continue;
          }
          overlay->videoFrame[i].bufferId= -1;
