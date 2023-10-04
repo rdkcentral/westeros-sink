@@ -4845,8 +4845,11 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
    if ( sink->soc.dataProbeId )
    {
       GST_DEBUG("gst_pad_remove_probe dataProbeId %d\n", sink->soc.dataProbeId);
+      UNLOCK( sink );
       gst_pad_remove_probe( sink->soc.dataProbePad, sink->soc.dataProbeId );
-      gst_object_unref( sink->soc.dataProbePad );
+      LOCK( sink );
+      if ( sink->soc.dataProbePad )
+        gst_object_unref( sink->soc.dataProbePad );
       sink->soc.dataProbePad= 0;
       sink->soc.dataProbeId= 0;
    }
