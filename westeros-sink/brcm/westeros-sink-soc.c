@@ -3412,16 +3412,10 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
          trickState.decodeMode= NEXUS_VideoDecoderDecodeMode_eAll;
       }
       else
-      if ( (clientPlaySpeed > 1.0) && (clientPlaySpeed <= 2.0) )
+      if ( (clientPlaySpeed > 1.0) && (clientPlaySpeed <= 4.0) )
       {
          trickState.topFieldOnly= true;
          trickState.decodeMode= NEXUS_VideoDecoderDecodeMode_eAll;
-      }
-      else
-      if ( (clientPlaySpeed > 2.0) && (clientPlaySpeed <= 4.0) )
-      {
-         trickState.topFieldOnly= true;
-         trickState.decodeMode= NEXUS_VideoDecoderDecodeMode_eIP;
       }
       else
       {
