@@ -224,11 +224,15 @@ static void wstSVPTerm( GstWesterosSink *sink )
 static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps )
 {
    GstStructure *structure;
+   int blp, elp;
 
    structure= gst_caps_get_structure(caps, 0);
    if( structure )
    {
       gboolean dv_bl_present_flag, dv_el_present_flag;
+
+      blp= sink->soc.dvBaseLayerPresent;
+      elp= sink->soc.dvEnhancementLayerPresent;
 
       if (gst_structure_get_boolean( structure, "dv_bl_present_flag", &dv_bl_present_flag))
       {
@@ -245,6 +249,12 @@ static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps )
       else
       {
          sink->soc.dvEnhancementLayerPresent= -1;
+      }
+
+      if ( (blp != sink->soc.dvBaseLayerPresent) || (elp != sink->soc.dvEnhancementLayerPresent) )
+      {
+         GST_DEBUG("dv change");
+         sink->soc.codecChange= TRUE;
       }
    }
 }

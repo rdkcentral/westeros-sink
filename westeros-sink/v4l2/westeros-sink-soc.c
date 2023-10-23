@@ -905,6 +905,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    memset( &sink->soc.fmtOut, 0, sizeof(sink->soc.fmtOut));
    sink->soc.formatsSet= FALSE;
    sink->soc.updateSession= FALSE;
+   sink->soc.codecChange= FALSE;
    sink->soc.syncType= -1;
    #ifdef USE_AMLOGIC_MESON_MSYNC
    sink->soc.sessionId= -1;
@@ -1687,6 +1688,14 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
       {
          gint num, denom, width, height;
          double pixelAspectRatioNext;
+         int hdrColorimetryPrev[4];
+         bool haveColorimetryPrev;
+
+         haveColorimetryPrev= sink->soc.haveColorimetry;
+         if ( haveColorimetryPrev )
+         {
+            memcpy( hdrColorimetryPrev, sink->soc.hdrColorimetry, sizeof(hdrColorimetryPrev) );
+         }
 
          if ( gst_structure_get_fraction( structure, "framerate", &num, &denom ) )
          {
@@ -1927,6 +1936,25 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
          #ifdef WESTEROS_SINK_SVP
          wstSVPAcceptCaps( sink, caps );
          #endif
+
+         if ( !sink->soc.codecChange )
+         {
+            if ( (haveColorimetryPrev != sink->soc.haveColorimetry) ||
+                 (sink->soc.haveColorimetry &&
+                 memcmp( hdrColorimetryPrev, sink->soc.hdrColorimetry, sizeof(hdrColorimetryPrev) )) )
+            {
+               sink->soc.codecChange= true;
+            }
+         }
+
+         if ( sink->soc.codecChange )
+         {
+            if ( sink->soc.frameInCount > 2 )
+            {
+               codecChange= true;
+            }
+            sink->soc.codecChange= FALSE;
+         }
 
          if ( (frameSizeChange && (sink->soc.hasEvents == FALSE)) || codecChange )
          {

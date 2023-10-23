@@ -225,6 +225,7 @@ struct _GstWesterosSinkSoc
    struct v4l2_format fmtOut;
    gboolean formatsSet;
    gboolean updateSession;
+   gboolean codecChange;
    int syncType;
    int sessionId;
    #ifdef USE_AMLOGIC_MESON_MSYNC
