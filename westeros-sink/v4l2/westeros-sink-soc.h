@@ -251,6 +251,7 @@ struct _GstWesterosSinkSoc
 
    gboolean videoPlaying;
    gboolean videoPaused;
+   gboolean videoServerPaused;
    gboolean hasEvents;
    gboolean hasEOSEvents;
    gboolean needCaptureRestart;

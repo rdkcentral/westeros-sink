@@ -933,6 +933,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.dispatchThread= NULL;
    sink->soc.videoPlaying= FALSE;
    sink->soc.videoPaused= FALSE;
+   sink->soc.videoServerPaused= FALSE;
    sink->soc.hasEvents= FALSE;
    sink->soc.hasEOSEvents= FALSE;
    sink->soc.needCaptureRestart= FALSE;
@@ -1470,6 +1471,7 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
       sink->startAfterCaps= TRUE;
       sink->soc.videoPlaying= TRUE;
       sink->soc.videoPaused= TRUE;
+      sink->soc.videoServerPaused= FALSE;
       UNLOCK(sink);
 
       result= TRUE;
@@ -4552,6 +4554,7 @@ static void wstSendPauseVideoClientConnection( WstVideoClientConnection *conn, b
       {
          GST_LOG("sent pause %d (rate %f) to video server", pause, conn->sink->segment.rate);
          FRAME("sent pause %d (rate %f) to video server", pause, conn->sink->segment.rate);
+         conn->sink->soc.videoServerPaused= pause;
       }
    }
 }
@@ -6477,6 +6480,10 @@ static gpointer wstVideoOutputThread(gpointer data)
    bool havePriEvent;
 
    GST_DEBUG("wstVideoOutputThread: enter");
+
+   LOCK(sink);
+   wasPaused= sink->soc.videoServerPaused;
+   UNLOCK(sink);
 
 capture_start:
    havePriEvent= false;
