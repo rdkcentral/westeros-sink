@@ -3915,6 +3915,13 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
                f= 0;
             }
          }
+         if (vfm->frameAdvance)
+         {
+            /* Since we are popping a frame, clear any frameAdvance */
+            vfm->frameAdvance= false;
+            DEBUG("Popping frame, clear frameAdvance");
+            FRAME("Popping frame, clear frameAdvance");
+         }
       }
       else if ( vfm->paused && vfm->frameAdvance && (vfm->bufferIdCurrent == -1) && vfm->queueSize )
       {
