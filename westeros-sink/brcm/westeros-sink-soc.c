@@ -461,6 +461,33 @@ bool checkIndependentVideoClock( GstWesterosSink *sink )
    return independentClock;
 }
 
+/* warn audio decoder to expect a pts error */
+typedef gboolean (*SETFORMATCHANGE)( NEXUS_SimpleStcChannelHandle stc_channel, guint pts);
+void sendVideoFormatChgMsg( GstWesterosSink *sink )
+{
+   if ( sink->soc.stcChannel && sink->soc.videoDecoder &&  sink->videoStarted )
+   {
+      NEXUS_VideoDecoderStatus status;
+      if (NEXUS_SimpleVideoDecoder_GetStatus(sink->soc.videoDecoder, &status))
+      {
+         GST_WARNING("NEXUS_SimpleVideoDecoder_GetStatus failed");
+         return;
+      }
+
+      void *module= dlopen( "libbrcmgstutil.so", RTLD_NOW );
+      if ( module )
+      {
+         SETFORMATCHANGE setFormatChange= (SETFORMATCHANGE)dlsym( module, "gst_brcm_system_clock_set_format_change_pts" );
+         if ( setFormatChange )
+         {
+            GST_DEBUG("calling gst_brcm_system_clock_set_format_change_pts() pts 0x%x", status.pts);
+            gboolean ret= (*setFormatChange)( sink->soc.stcChannel, status.pts );
+         }
+         dlclose( module );
+      }
+   }
+}
+
 static void updateVidfilterSettings ( GstWesterosSink *sink )
 {
    /* send low_latency setting upstream, so app only has to activate sink.. */
@@ -747,6 +774,12 @@ static void streamChangedCallback(void * context, int param)
 #if (NEXUS_PLATFORM_VERSION_MAJOR > 16) || ((NEXUS_PLATFORM_VERSION_MAJOR == 16) && (NEXUS_PLATFORM_VERSION_MINOR > 1))
    GST_INFO("\teotfcolorDepth=%d", streamInfo.colorDepth);
 #endif
+
+   if (sink->soc.streamFrameRate && sink->soc.streamFrameRate != streamInfo.frameRate)
+   {
+      sendVideoFormatChgMsg(sink);
+   }
+   sink->soc.streamFrameRate= streamInfo.frameRate;
 }
 #endif
 
@@ -793,6 +826,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.emitResourceChange= FALSE;
    sink->soc.emitDecodeError= FALSE;
    sink->soc.decodeError= FALSE;
+   sink->soc.streamFrameRate= 0;
    sink->soc.prevQueueDepth= 0;
    sink->soc.prevFifoDepth= 0;
    sink->soc.prevNumDecoded= 0;
@@ -1738,6 +1772,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.emitDecodeError= FALSE;
    sink->soc.decodeError= FALSE;
    sink->soc.noFrameCount= 0;
+   sink->soc.streamFrameRate= 0;
    sink->soc.prevQueueDepth= 0;
    sink->soc.prevFifoDepth= 0;
    sink->soc.prevNumDecoded= 0;
@@ -2987,6 +3022,13 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
       needUpdate= false;
    }
 
+   if ( needUpdate && vx==0 && vy==0 && vw==0 && vh==0 )
+   {
+      /* will apparently generate a disturbance in video PTS, causing audio PTS error */
+      GST_INFO("window changed to 0,0,0,0, warn audiodecoder");
+      sendVideoFormatChgMsg(sink);
+   }
+
    if ( sink->soc.videoWindow )
    {
       NEXUS_SurfaceClient_GetSettings( sink->soc.videoWindow, &vClientSettings );
@@ -3610,6 +3652,22 @@ static gboolean processEventSinkSoc(GstWesterosSink *sink, GstPad *pad, GstEvent
                establishSource( sink );
             }
             #endif
+         }
+         break;
+      case GST_EVENT_STREAM_GROUP_DONE:
+         {
+            LOCK( sink );
+            gboolean eosDetected= sink->eosDetected;
+            sink->eosEventSeen= TRUE;
+            UNLOCK( sink );
+            if ( eosDetected )
+            {
+               passToDefault= TRUE;
+            }
+            else
+            {
+               gst_westeros_sink_soc_eos_event( sink );
+            }
          }
          break;
    }

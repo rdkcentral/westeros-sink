@@ -98,6 +98,7 @@ struct _GstWesterosSinkSoc
    gboolean emitResourceChange;
    gboolean emitDecodeError;
    gboolean decodeError;
+   guint streamFrameRate;
    guint prevQueueDepth;
    guint prevFifoDepth;
    guint prevNumDecoded;
