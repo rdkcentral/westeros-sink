@@ -6439,14 +6439,31 @@ static void wstSwapDRMBuffersAtomic( WstGLCtx *ctx )
 
                if ( ctx->outputEnable )
                {
-                  int crtcW, crtcH;
+                  int crtcX, crtcY, crtcW, crtcH;
                   if ( gGraphicsActualSize )
                   {
+                     if ( ctx->modeInfo->hdisplay > nw->width )
+                        crtcX= (ctx->modeInfo->hdisplay-nw->width)/2;
+                     else
+                        crtcX= 0;
+                     if ( ctx->modeInfo->vdisplay > nw->height )
+                        crtcY= (ctx->modeInfo->vdisplay-nw->height)/2;
+                     else
+                        crtcY= 0;
                      crtcW= nw->width;
                      crtcH= nw->height;
                   }
                   else
                   {
+                     crtcX= 0;
+                     if ( ctx->graphicsEnable )
+                     {
+                        crtcY= 0;
+                     }
+                     else
+                     {
+                        crtcY= -ctx->modeInfo->vdisplay+2;
+                     }
                      crtcW= ctx->modeInfo->hdisplay;
                      crtcH= ctx->modeInfo->vdisplay;
                   }
@@ -6476,20 +6493,11 @@ static void wstSwapDRMBuffersAtomic( WstGLCtx *ctx )
 
                   wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
                                         nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
-                                        "CRTC_X", 0 );
+                                        "CRTC_X", crtcX );
 
-                  if ( ctx->graphicsEnable )
-                  {
-                     wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
-                                           nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
-                                           "CRTC_Y", 0 );
-                  }
-                  else
-                  {
-                     wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
-                                           nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
-                                           "CRTC_Y", -ctx->modeInfo->vdisplay+2 );
-                  }
+                  wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
+                                        nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
+                                        "CRTC_Y", crtcY );
 
                   wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
                                         nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
