@@ -2426,7 +2426,7 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
       GST_DEBUG("set decoderEOS");
       sink->soc.decoderEOS= 1;
    }
-   else
+   else if ( sink->soc.numBuffersOut )
    {
       int rc;
       struct v4l2_decoder_cmd dcmd;
@@ -6580,6 +6580,29 @@ capture_start:
          sink->soc.frameRateFractionDenom= 1;
          sink->soc.frameRateChanged= TRUE;
          sink->queryPositionFromPeer= FALSE;
+      }
+
+      if ( sink->eosEventSeen )
+      {
+         if ( !sink->soc.hasEOSEvents || (sink->soc.frameInCount <= 2) )
+         {
+            GST_DEBUG("set decoderEOS");
+            sink->soc.decoderEOS= 1;
+         }
+         else
+         {
+            struct v4l2_decoder_cmd dcmd;
+
+            memset( &dcmd, 0, sizeof(dcmd));
+
+            GST_DEBUG("got eos: issuing decoder stop");
+            dcmd.cmd= V4L2_DEC_CMD_STOP;
+            rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_DECODER_CMD, &dcmd );
+            if ( rc )
+            {
+               GST_DEBUG("VIDIOC_DECODER_CMD V4L2_DEC_CMD_STOP rc %d errno %d",rc, errno);
+            }
+         }
       }
    }
 
