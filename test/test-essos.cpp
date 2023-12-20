@@ -39,6 +39,7 @@ bool testCaseEssosUseWayland( EMCTX *emctx )
    EssCtx *ctx= 0;
    bool useWayland;
    bool value;
+   EssAppPlatformDisplayType appPlatformDisplayType= EssAppPlatformDisplayType::EssAppPlatformDisplayType_direct;
 
    useWayland= true;
    result= EssContextSetUseWayland( (EssCtx*)0, useWayland );
@@ -69,6 +70,23 @@ bool testCaseEssosUseWayland( EMCTX *emctx )
       goto exit;
    }
 
+   appPlatformDisplayType= EssContextGetAppPlatformDisplayType( ctx );
+   #ifdef EGL_PLATFORM_WAYLAND_EXT
+   if ( appPlatformDisplayType != EssAppPlatformDisplayType::EssAppPlatformDisplayType_waylandExtension )
+   {
+      EMERROR("EssContextGetAppPlatformDisplayType reports unexpected value: expected(%d) actual(%d)",
+              EssAppPlatformDisplayType::EssAppPlatformDisplayType_waylandExtension, appPlatformDisplayType );
+      goto exit;
+   }
+   #else
+   if ( appPlatformDisplayType != EssAppPlatformDisplayType::EssAppPlatformDisplayType_wayland )
+   {
+      EMERROR("EssContextGetAppPlatformDisplayType reports unexpected value: expected(%d) actual(%d)",
+              EssAppPlatformDisplayType::EssAppPlatformDisplayType_wayland, appPlatformDisplayType );
+      goto exit;
+   }
+   #endif //EGL_PLATFORM_WAYLAND_EXT
+
    useWayland= false;
    result= EssContextSetUseWayland( ctx, useWayland );
    if ( result == false )
@@ -81,6 +99,14 @@ bool testCaseEssosUseWayland( EMCTX *emctx )
    if ( value != useWayland )
    {
       EMERROR("EssContextGetUseWayland reports unexpected value: expected(%d) actual(%d)", useWayland, value );
+      goto exit;
+   }
+
+   appPlatformDisplayType= EssContextGetAppPlatformDisplayType( ctx );
+   if ( appPlatformDisplayType != EssAppPlatformDisplayType::EssAppPlatformDisplayType_direct )
+   {
+      EMERROR("EssContextGetAppPlatformDisplayType reports unexpected value: expected(%d) actual(%d)",
+              EssAppPlatformDisplayType::EssAppPlatformDisplayType_direct, appPlatformDisplayType );
       goto exit;
    }
 

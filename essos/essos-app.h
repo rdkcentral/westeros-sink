@@ -101,6 +101,14 @@ typedef struct _EssTerminateListener
 } EssTerminateListener;
 
 
+typedef enum _EssAppPlatformDisplayType
+{
+   EssAppPlatformDisplayType_direct,
+   EssAppPlatformDisplayType_wayland,
+   EssAppPlatformDisplayType_waylandExtension
+} EssAppPlatformDisplayType;
+
+
 /**
  * EssContextCreate
  *
@@ -145,6 +153,13 @@ bool EssContextInit( EssCtx *ctx );
  * to do so automatically.
  */
 bool EssContextGetEGLDisplayType( EssCtx *ctx, NativeDisplayType *displayType );
+
+/**
+ * EssContextGetAppPlatformDisplayType
+ *
+ * Returns true app platform display type
+ */
+EssAppPlatformDisplayType EssContextGetAppPlatformDisplayType( EssCtx *ctx );
 
 /**
  * EssContextCreateNativeWindow

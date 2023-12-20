@@ -843,6 +843,23 @@ exit:
    return result;
 }
 
+EssAppPlatformDisplayType EssContextGetAppPlatformDisplayType( EssCtx *ctx )
+{
+   EssAppPlatformDisplayType displayType= EssAppPlatformDisplayType_direct;
+
+   bool useWayland= EssContextGetUseWayland(ctx);
+
+   if (useWayland)
+   {
+      displayType= EssAppPlatformDisplayType_wayland;
+      #ifdef EGL_PLATFORM_WAYLAND_EXT
+         displayType= EssAppPlatformDisplayType_waylandExtension;
+         INFO("prefering platform extensions");
+      #endif //EGL_PLATFORM_WAYLAND_EXT
+   }
+   return displayType;
+}
+
 bool EssContextCreateNativeWindow( EssCtx *ctx, int width, int height, NativeWindowType *nativeWindow )
 {
    bool result= false;
