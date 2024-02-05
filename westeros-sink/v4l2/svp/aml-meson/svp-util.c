@@ -292,6 +292,14 @@ static void wstSVPDecoderConfig( GstWesterosSink *sink )
       decParm->cfg.metadata_config_flag |= (0 << 20);
    }
 
+   #ifdef P_STREAM_ENABLE_NR_DI
+   /*enable nr */
+   decParm->cfg.metadata_config_flag |= (1 << 15);
+
+    /*enable di */
+   decParm->cfg.metadata_config_flag |= (1 << 14);
+   #endif
+
    /*set bit12 value to 1,
     *v4l2 output 0 pts of second interlace field frame */
    decParm->cfg.metadata_config_flag |= (1 << 12);
