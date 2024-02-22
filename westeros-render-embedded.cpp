@@ -2205,10 +2205,13 @@ static void wstRendererUpdateScene( WstRenderer *renderer )
         )
       {
          #ifdef ENABLE_LEXPSYNCPROTOCOL
-         if( (surface->bufferSync.bufferRelease != NULL) && (surface->bufferSync.acquireFenceFd != -1) )
+         if (surface->bufferSync.acquireFenceFd != -1)
+         {
+            wstEnsureSurfaceBufferIsReady(rendererEMB, surface->bufferSync.acquireFenceFd);
+         }
+         if (surface->bufferSync.bufferRelease != NULL)
          {
             isFenced = true;
-            wstEnsureSurfaceBufferIsReady(rendererEMB, surface->bufferSync.acquireFenceFd);
          }
          #endif
          wstRendererEMBRenderSurface( rendererEMB, surface );

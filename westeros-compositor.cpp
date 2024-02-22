@@ -5587,8 +5587,8 @@ static void wstSurfaceDestroy( WstSurface *surface )
        // get_release, yet attach and commit
        struct wl_resource *resource= surface->createdBufferSync.bufferRelease->resource;
        wl_resource_destroy(resource);
-       WstLExpSyncFdClear(&surface->createdBufferSync.acquireFenceFd);
    }
+   WstLExpSyncFdClear(&surface->createdBufferSync.acquireFenceFd);
    WstLExpSyncClear(&surface->createdBufferSync);
    #endif
 
@@ -6341,9 +6341,8 @@ static void wstISurfaceCommit(struct wl_client *client, struct wl_resource *reso
       {
          #ifdef ENABLE_LEXPSYNCPROTOCOL
          // set acquire_fence_fd, reset render_fence_fd for fenced_release event
-         if(surface->attachedBufferSync.bufferRelease != NULL)
+         if (surface->attachedBufferSync.bufferRelease != NULL || surface->attachedBufferSync.acquireFenceFd != -1)
          {
-            assert(surface->attachedBufferSync.bufferRelease->renderFenceFd == -1);
             WstRendererSurfaceImportSync( surface->renderer, surface->surface, &surface->attachedBufferSync);
          }
          else

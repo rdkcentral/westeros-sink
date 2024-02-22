@@ -255,7 +255,17 @@ void WstLExpSyncFireRelease( WstExplicitSync *bufferSync )
    struct wl_resource *resource;
    int releaseFenceFd= -1;
 
-   if( (bufferSync == NULL) || (bufferSync->bufferRelease == NULL) )
+   if (bufferSync == NULL)
+   {
+      return;
+   }
+
+   if (bufferSync->acquireFenceFd != -1)
+   {
+      WstLExpSyncFdUpdate(&bufferSync->acquireFenceFd, -1);
+   }
+
+   if (bufferSync->bufferRelease == NULL)
    {
       return;
    }
