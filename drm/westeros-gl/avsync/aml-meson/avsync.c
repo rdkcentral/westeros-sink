@@ -281,6 +281,10 @@ static VideoFrame *wstAVSyncPop( VideoFrameManager *vfm )
             ERROR("Unable to identify sync popped frame: pts %d", vf->pts);
          }
       }
+      if ( !f && (vfm->queueSize > 0) && vfm->queue[0].advanced )
+      {
+         f= &vfm->queue[0];
+      }
       pthread_mutex_unlock( &vfm->mutex);
    }
    return f;
