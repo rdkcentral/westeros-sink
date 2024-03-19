@@ -72,15 +72,14 @@ typedef enum _WstHints
 typedef struct _WstRenderer WstRenderer;
 typedef struct _WstRenderSurface WstRenderSurface;
 typedef struct _WstNestedConnection WstNestedConnection;
+typedef struct _WstExplicitSync WstExplicitSync;
 
 typedef int (*WSTMethodRenderInit)( WstRenderer *renderer, int argc, char **argv);
 typedef void (*WSTMethodRenderTerm)( WstRenderer *renderer );
 typedef void (*WSTMethodUpdateScene)( WstRenderer *renderer );
 typedef WstRenderSurface* (*WSTMethodSurfaceCreate)( WstRenderer *renderer );
 typedef void (*WSTMethodSurfaceDestroy)( WstRenderer *renderer, WstRenderSurface *surf );
-#ifdef ENABLE_LEXPSYNCPROTOCOL
 typedef void (*WSTMethodSurfaceImportSync)( WstRenderer *renderer, WstRenderSurface *surf, WstExplicitSync *bufferSync);
-#endif
 typedef void (*WSTMethodSurfaceCommit)( WstRenderer *renderer, WstRenderSurface *surface, struct wl_resource *resource );
 typedef void (*WSTMethodSurfaceSetVisible)( WstRenderer *renderer, WstRenderSurface *surface, bool visible );
 typedef bool (*WSTMethodSurfaceGetVisible)( WstRenderer *renderer, WstRenderSurface *surface, bool *visible );
@@ -109,9 +108,7 @@ typedef struct _WstRenderer
    WSTMethodRenderTerm renderTerm;
    WSTMethodUpdateScene updateScene;
    WSTMethodSurfaceCreate surfaceCreate;
-   #ifdef ENABLE_LEXPSYNCPROTOCOL
    WSTMethodSurfaceImportSync surfaceImportSync;
-   #endif
    WSTMethodSurfaceDestroy surfaceDestroy;
    WSTMethodSurfaceCommit surfaceCommit;
    WSTMethodSurfaceSetVisible surfaceSetVisible;
@@ -153,9 +150,7 @@ void WstRendererDestroy( WstRenderer *renderer );
 void WstRendererUpdateScene( WstRenderer *renderer );
 WstRenderSurface* WstRendererSurfaceCreate( WstRenderer *renderer );
 void WstRendererSurfaceDestroy( WstRenderer *renderer, WstRenderSurface *surface );
-#ifdef ENABLE_LEXPSYNCPROTOCOL
 void WstRendererSurfaceImportSync( WstRenderer *renderer, WstRenderSurface *surface, WstExplicitSync *bufferSync);
-#endif
 void WstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *surface, struct wl_resource *resource );
 void WstRendererSurfaceSetVisible( WstRenderer *renderer, WstRenderSurface *surface, bool visible );
 bool WstRendererSurfaceGetVisible( WstRenderer *renderer, WstRenderSurface *surface, bool *visible );
