@@ -6225,7 +6225,7 @@ static void wstISurfaceCommit(struct wl_client *client, struct wl_resource *reso
             {
                EGLint value;
                uint32_t format= 0;
-               int stride;
+               int stride= 0;
                void *deviceBuffer;
 
                if (EGL_TRUE == eglQueryWaylandBufferWL( eglDisplay,

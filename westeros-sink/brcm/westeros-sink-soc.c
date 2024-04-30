@@ -2354,13 +2354,13 @@ static gpointer captureThread(gpointer data)
    while( !sink->soc.quitCaptureThread )
    {
       LOCK( sink );
+      gboolean eosDetected= sink->eosDetected;
       if ( !sink->soc.haveHardware )
       {
          UNLOCK( sink );
          goto end_loop;
       }
       gboolean videoPlaying= sink->soc.videoPlaying;
-      gboolean eosDetected= sink->eosDetected;
       if ( sink->windowChange )
       {
          sink->windowChange= false;
