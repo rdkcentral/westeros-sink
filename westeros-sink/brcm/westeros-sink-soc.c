@@ -3389,12 +3389,13 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
       return;
    }
 
-   /* use 2.0,  1.5 and up tends to drop frames unnecessarily, if they are only a bit late.
-      2.0 will get to the same low latency, but is smoother  */
+   /* use 4.0,  1.5 and up tends to drop frames unnecessarily, if they are only a bit late.
+    *  2.0 decode speed the decoder is not decoding faster than the stream, so it's slowly getting behind.
+      4.0 will get low latency & decode faster */
    if ( sink->soc.useImmediateOutput )
    {
        NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
-       trickState.rate= playing ? NEXUS_NORMAL_DECODE_RATE * 2.0 : 0.0;
+       trickState.rate= playing ? NEXUS_NORMAL_DECODE_RATE * 4.0 : 0.0;
        trickState.tsmEnabled= NEXUS_TsmMode_eDisabled;
        GST_LOG("updateClientPlaySpeed: useImmediateOutput: SetTrickState rate %d TsmMode disabled", trickState.rate);
        NEXUS_SimpleVideoDecoder_SetTrickState(sink->soc.videoDecoder, &trickState);
