@@ -3645,7 +3645,6 @@ static gboolean processEventSinkSoc(GstWesterosSink *sink, GstPad *pad, GstEvent
          }
          break;
       default:
-         *passToDefault= TRUE;
          break;
    }
 
