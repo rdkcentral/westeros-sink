@@ -965,7 +965,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.videoHeight= sink->windowHeight;
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
-   sink->soc.frameStepOnPreroll= FALSE;
+   sink->soc.frameStepOnPreroll= TRUE;
    sink->soc.lowMemoryMode= FALSE;
    sink->soc.forceAspectRatio= FALSE;
    sink->soc.secureVideo= FALSE;
