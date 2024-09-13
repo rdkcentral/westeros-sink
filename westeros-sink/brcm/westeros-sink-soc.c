@@ -609,7 +609,10 @@ static bool IsDbvUnsupportedFormat(void)
 
    result=
     (
+#if (NEXUS_PLATFORM_VERSION_MAJOR < 23 && !defined(NEXUS_HDMI_1080i_DVB_PROTECTION_BACKPORT))
+         /* SWSTB-21770 fixed in URSR_22 since 7/14/22 , don't need this check */
         ( displaySettings.format == NEXUS_VideoFormat_e1080i ) || /* 1080i is not supported */
+#endif
         (
             displaySettings.format == NEXUS_VideoFormat_e3840x2160p60hz
             &&
@@ -716,7 +719,7 @@ static void streamChangedCallback(void * context, int param)
       bool doNotFollowHDRStreamFormat= false;
       #ifdef NEXUS_HAVE_HDMI_OVERRIDE_MATRIX
       /* displaySettings.hdmiPreferences.overrideMatrixCoefficients is set in Device Settings HAL to switch between 'follow stream dynrng' or 'force HDR' */
-      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto);
+      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto) || sink->soc.disableSourceFollow;
       #endif
       if (!doNotFollowHDRStreamFormat)
       {
@@ -890,6 +893,16 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
       }
    }
    #endif
+
+   sink->soc.disableSourceFollow= FALSE;
+   {
+      const char *env= getenv("GST_DISABLE_SRC_FOLLOW");
+      if ( env && (atoi(env) != 0) )
+      {
+         printf("westerossink: disabling source follow\n");
+         sink->soc.disableSourceFollow= TRUE;
+      }
+   }
 
    g_print("westeros-sink: brcm sdk %d.%d\n", NEXUS_PLATFORM_VERSION_MAJOR, NEXUS_PLATFORM_VERSION_MINOR);
 
@@ -1879,10 +1892,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       sink->soc.captureThread= g_thread_new("westerossinkCAP", captureThread, sink);
    }
 
-   NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
-   trickState.stcTrickEnabled= 1;
-   NEXUS_SimpleVideoDecoder_SetTrickState(sink->soc.videoDecoder, &trickState);
- 
+
    sink->videoStarted= TRUE;
 
    updateClientPlaySpeed(sink, sink->playbackRate, GST_STATE(GST_ELEMENT(sink)) == GST_STATE_PLAYING ? TRUE : FALSE);
@@ -1969,7 +1979,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
       bool doNotFollowHDRStreamFormat= false;
       #ifdef NEXUS_HAVE_HDMI_OVERRIDE_MATRIX
       /* displaySettings.hdmiPreferences.overrideMatrixCoefficients is set in Device Settings HAL to switch between 'follow stream dynrng' or 'force HDR' */
-      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto);
+      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto) || sink->soc.disableSourceFollow;
       #endif
       if (!doNotFollowHDRStreamFormat)
       {
@@ -2000,7 +2010,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
       bool doNotFollowHDRStreamFormat= false;
       #ifdef NEXUS_HAVE_HDMI_OVERRIDE_MATRIX
       /* displaySettings.hdmiPreferences.overrideMatrixCoefficients is set in Device Settings HAL to switch between 'follow stream dynrng' or 'force HDR' */
-      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto);
+      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto) || sink->soc.disableSourceFollow;
       #endif
       if (!doNotFollowHDRStreamFormat)
       {
@@ -3395,6 +3405,7 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
    if ( sink->soc.useImmediateOutput )
    {
        NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
+       trickState.stcTrickEnabled= TRUE;
        trickState.rate= playing ? NEXUS_NORMAL_DECODE_RATE * 4.0 : 0.0;
        trickState.tsmEnabled= NEXUS_TsmMode_eDisabled;
        GST_LOG("updateClientPlaySpeed: useImmediateOutput: SetTrickState rate %d TsmMode disabled", trickState.rate);
@@ -3418,6 +3429,7 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
    sink->soc.clientPlaying= playing;
 
    NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
+   trickState.stcTrickEnabled= clientPlaySpeed == 1.0 ? FALSE : TRUE;
 
    if ( clientPlaySpeed <= MAX_STC_PLAY_RATE )
    {
