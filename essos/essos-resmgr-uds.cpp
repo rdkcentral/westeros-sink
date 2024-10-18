@@ -734,7 +734,7 @@ static void *essRMResourceConnectionThread( void *arg )
             id= m[3];
             if ( mlen > sizeof(mbody)-4 )
             {
-               ERROR("bad client message length: %d : truncating");
+               ERROR("bad client message length: %d : truncating", mlen);
                mlen= sizeof(mbody)-4;
             }
             if ( mlen > 1 )
@@ -804,6 +804,7 @@ static void *essRMResourceConnectionThread( void *arg )
                               case EssRMgrResType_videoDecoder:
                                  if ( infolen >= 8 )
                                  {
+                                    offset += 4;
                                     req.info.video.maxWidth= getU32( &m[offset] );
                                     req.info.video.maxHeight= getU32( &m[offset+4] );
                                  }
@@ -1801,7 +1802,7 @@ static void *essRMClientConnectionThread( void *userData )
             id= m[3];
             if ( mlen > sizeof(mbody)-4 )
             {
-               ERROR("bad server message length: %d : truncating");
+               ERROR("bad server message length: %d : truncating", mlen);
                mlen= sizeof(mbody)-4;
             }
             if ( mlen > 1 )
