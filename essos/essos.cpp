@@ -2485,12 +2485,12 @@ static void essKeyboardKey( void *data, struct wl_keyboard *keyboard, uint32_t s
       default:
          if ( state == WL_KEYBOARD_KEY_STATE_PRESSED )
          {
-            ctx->lastKeyTime= essGetCurrentTimeMillis();
             if ( !(ctx->keyPressed && (ctx->lastKeyCode == key)) )
             {
                ctx->lastKeyCode= key;
                ctx->keyPressed= true;
                ctx->keyRepeating= false;
+               ctx->lastKeyTime= essGetCurrentTimeMillis();
                essProcessKeyPressed( ctx, key );
             }
          }
@@ -3874,12 +3874,12 @@ static void essProcessInputDevices( EssCtx *ctx )
                                        essProcessKeyReleased( ctx, keyCode );
                                        break;
                                     case 1:
-                                       ctx->lastKeyTime= timeMillis;
                                        if ( !(ctx->keyPressed && (ctx->lastKeyCode == keyCode)) )
                                        {
                                           ctx->lastKeyCode= keyCode;
                                           ctx->keyPressed= true;
                                           ctx->keyRepeating= false;
+                                          ctx->lastKeyTime= timeMillis;
                                           essFillKeyAndMetadataListenerMetadata(ctx, ctx->inputDeviceFds[i].fd);
                                           essProcessKeyPressed( ctx, keyCode );
                                        }
