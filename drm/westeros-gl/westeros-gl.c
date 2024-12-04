@@ -405,6 +405,7 @@ typedef struct _WstOffloadMsgQ
    int writeIdx;
    pthread_mutex_t mutex;
    sem_t sem;
+   void* using_connection;
 } WstOffloadMsgQ;
 
 typedef struct _WstGLCtx
@@ -681,7 +682,7 @@ static void avProgLog( long long nanoTime, int syncGroup, const char *edge, cons
       pts= ((nanoTime / 1000000000LL) * 90000)+(((nanoTime % 1000000000LL) * 90000) / 1000000000LL);
 
       clock_gettime(CLOCK_MONOTONIC, &tp);
-      fprintf(gAvProgOut, "AVPROG: [%6u.%06u] %llu %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
+      fprintf(gAvProgOut, "AVPROG: [%6ld.%06ld] %llu %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
    }
 }
 
@@ -5939,9 +5940,11 @@ static void *wstOffloadThread( void *arg )
       {
          if (ctx->offloadThreadStopRequested)
          {
+            pMsgQ->using_connection = NULL;
             break;
          }
          pthread_mutex_lock( &pMsgQ->mutex);
+         pMsgQ->using_connection = NULL;
          fullness= pMsgQ->writeIdx - pMsgQ->readIdx;
          if (fullness < 0)
          {
@@ -5959,7 +5962,16 @@ static void *wstOffloadThread( void *arg )
          param_long_long= pCur->param_long_long;
          param_int= pCur->param_int;
          param_pvoid2= pCur->param_pvoid2;
-
+         switch (msgType)
+         {
+            case WST_OLM_BUFF_RELEASE:
+            case WST_OLM_STATUS_UPDATE:
+            case WST_OLM_SENT_UNDERFLOW:
+               pMsgQ->using_connection = param_pvoid;
+               break;
+            default:
+               break;
+         }
          pMsgQ->readIdx++;
          if (pMsgQ->readIdx >= OFFLOAD_QUEUE_CAPACITY)
          {
@@ -5969,7 +5981,7 @@ static void *wstOffloadThread( void *arg )
 
          wstOffloadMsgExecute( msgType, param_pvoid, param_long_long, param_int, param_pvoid2 );
 
-         TRACE1("OLM: process msg %d, lpar %lld, par %d", msgType, param_long_long, param_int);
+         TRACE1("OLM: process msg %d, %p, lpar %lld, par %d", msgType, param_pvoid, param_long_long, param_int);
       }
       #ifdef USE_UEVENT_HOTPLUG
       wstProcessUEvent( ctx );
@@ -6029,6 +6041,7 @@ static void wstOffloadFlushConn( VideoServerConnection *conn )
    long long param_long_long;
    int param_int;
    void *param_pvoid, *param_pvoid2;
+   bool wait_for_processing = false;
 
    DEBUG("wstOffloadFlushConn: begin: conn %p",conn);
    pMsgQ= &gCtx->offloadMsgQ;
@@ -6071,7 +6084,15 @@ static void wstOffloadFlushConn( VideoServerConnection *conn )
          readIdx= 0;
       }
    }
+   wait_for_processing = ( conn && ( conn == (VideoServerConnection *)pMsgQ->using_connection ) && gCtx->offloadThreadStarted );
    pthread_mutex_unlock( &pMsgQ->mutex);
+   while (wait_for_processing) {
+      TRACE3("wstOffloadFlushConn: awaiting processing: conn %p",conn);
+      usleep( 1000 );
+      pthread_mutex_lock( &pMsgQ->mutex);
+      wait_for_processing = ( conn && ( conn == (VideoServerConnection *)pMsgQ->using_connection ) && gCtx->offloadThreadStarted );
+      pthread_mutex_unlock( &pMsgQ->mutex);
+   }
    DEBUG("wstOffloadFlushConn: end: conn %p",conn);
 }
 
