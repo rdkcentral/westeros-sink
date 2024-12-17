@@ -1282,7 +1282,7 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    sink->startPTS= 0;
    sink->firstPTS= 0;
    sink->currentPTS= 0;
-   sink->position= 0;
+   sink->position= GST_CLOCK_TIME_NONE;
    sink->positionSegmentStart= 0;
    sink->prevPositionSegmentStart= 0xFFFFFFFFFFFFFFFFLL;
    sink->segment.start= -1LL;
@@ -1629,7 +1629,7 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
          resMgrInit(sink);
          resMgrRequestDecoder(sink);
 
-         sink->position= 0;         
+         sink->position= GST_CLOCK_TIME_NONE;
          sink->eosDetected= FALSE;
          sink->eosEventSeen= FALSE;
          if ( !gst_westeros_sink_backend_null_to_ready(sink, &passToDefault) )
