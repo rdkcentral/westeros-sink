@@ -36,7 +36,6 @@ another platfrom caused by this change
 
 * brcm: sink updates
 -1080i fallback to SDR
--HDR10 on AXG1V4
 -Use first pts rather than first pts passed callback
 
 

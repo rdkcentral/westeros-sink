@@ -651,7 +651,6 @@ static void streamChangedCallback(void * context, int param)
    NEXUS_SimpleVideoDecoder_GetStreamInformation(decoderHandle, &streamInfo);
    #if (NEXUS_PLATFORM_VERSION_MAJOR > 17) || ((NEXUS_PLATFORM_VERSION_MAJOR == 17) && (NEXUS_PLATFORM_VERSION_MINOR > 1))
    #if defined (ENABLE_DOLBYVISION) || defined (ENABLE_HDR10)
-   /* ENABLE_DOLBYVISION is for Xi6/XiONE, ENABLE_HDR10 is for XG1v4. Both need this code */
    NxClient_DisplaySettings displaySettings;
    NEXUS_Error rc= NEXUS_SUCCESS;
    NEXUS_VideoDynamicRangeMode dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eTrackInput;
@@ -693,7 +692,6 @@ static void streamChangedCallback(void * context, int param)
    }
 
    #if defined (ENABLE_DOLBYVISION) || defined (ENABLE_HDR10)
-   /* ENABLE_DOLBYVISION is for Xi6/XiONE, ENABLE_HDR10 is for XG1v4. Both need this code */
    #ifdef ENABLE_DOLBYVISION
    #if (NEXUS_PLATFORM_VERSION_MAJOR >= 19)
    /* SDK 19.x introduced Dolby Vision Low Latency so the enums changed */
