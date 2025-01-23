@@ -118,6 +118,8 @@
 #define SYNC_AMASTER (1)
 #define SYNC_IMMEDIATE (255)
 
+#define MIN_SELECTABLE_RATE (10)
+
 typedef EGLDisplay (*PREALEGLGETDISPLAY)(EGLNativeDisplayType);
 typedef EGLBoolean (*PREALEGLSWAPBUFFERS)(EGLDisplay, EGLSurface surface );
 typedef EGLContext (*PREALEGLCREATECONTEXT)(EGLDisplay dpy,
@@ -2189,7 +2191,13 @@ static void *wstVideoServerConnectionThread( void *arg )
                            num= (int)wstGetU32( m+1 );
                            denom= (int)wstGetU32( m+5 );
                            DEBUG("got frame rate video plane %d: (%d / %d)", conn->videoPlane->plane->plane_id, num, denom);
-                           if ( (num == 0) && (gCtx->defaultRate > 0) )
+                           if ( ( num == 0 || (denom > 0 && (num / denom < MIN_SELECTABLE_RATE) ) ) && ( gCtx->modeInfo && gCtx->modeInfo->vrefresh ) )
+                           {
+                              num= 0;
+                              denom= 0;
+                              DEBUG("frame rate invalid (%d / %d). keeping current rate %d", num, denom, gCtx->modeInfo->vrefresh);
+                           }
+                           else if ( (num == 0) && (gCtx->defaultRate > 0) )
                            {
                               num= gCtx->defaultRate;
                               denom= 1;
