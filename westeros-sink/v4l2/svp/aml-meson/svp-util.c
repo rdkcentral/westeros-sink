@@ -379,8 +379,19 @@ static void wstSVPDecoderConfig( GstWesterosSink *sink )
    {
       default:
       case V4L2_PIX_FMT_MPEG:
+          decParm->cfg.double_write_mode= VDEC_DW_NO_AFBC;
+          break;
       case V4L2_PIX_FMT_H264:
          decParm->cfg.double_write_mode= VDEC_DW_NO_AFBC;
+         if (!sink->soc.interlaced) {
+             if (!sink->soc.lowMemoryMode
+                 && (sink->soc.frameWidthStream > 1920 || sink->soc.frameHeightStream > 1080)) {
+                 decParm->cfg.metadata_config_flag |= (1 << 13);
+                 decParm->cfg.double_write_mode = VDEC_DW_AFBC_x2_1_4_DW;
+             } else {
+                 decParm->cfg.double_write_mode = VDEC_DW_AFBC_ONLY;
+             }
+         }
          break;
       case V4L2_PIX_FMT_HEVC:
       case V4L2_PIX_FMT_VP9:
@@ -460,6 +471,10 @@ static void wstSVPDecoderConfig( GstWesterosSink *sink )
    if ( decParm->cfg.double_write_mode == VDEC_DW_AFBC_ONLY )
    {
       sink->soc.preferNV12M= FALSE;
+   }
+    else
+   {
+       sink->soc.preferNV12M= TRUE;
    }
    if (sink->soc.lowMemoryMode)
    {
