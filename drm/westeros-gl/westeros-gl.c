@@ -715,6 +715,90 @@ static char *wstDispFullness( VideoFrameManager *vfm )
    return NULL;
 }
 
+static int wstSetThreadNameAndPriority(const char *threadName, const char *env, int defaultPolicy, int defaultPriority)
+{
+   int rc= -1;
+   int priority= defaultPriority;
+   int policy= defaultPolicy;
+   const char *policyName;
+   char name[16];
+
+   /* get env settings from file for envName */
+   if ( env )
+   {
+      const char *envVal= getenv(env);
+      if (envVal)
+      {
+         int len, c;
+         len= strlen(envVal);
+         if ( (len >= 3) && (envVal[1]==',') )
+         {
+            /* parse thread policy value */
+            c= envVal[0];
+            switch( c )
+            {
+               case 'o':
+               case 'O':
+               default:
+                  policy= SCHED_OTHER;
+                  break;
+               case 'f':
+               case 'F':
+                  policy= SCHED_FIFO;
+                  break;
+               case 'r':
+               case 'R':
+                  policy= SCHED_RR;
+                  break;
+            }
+            /* get thread priority value */
+            priority = atoi(envVal+2);
+         }
+      }
+   }
+   if(policy != -1)
+   {
+      struct sched_param param;
+      memset( &param, 0, sizeof(param) );
+      param.sched_priority= priority;
+      if ( threadName && env )
+      {
+         switch( policy )
+         {
+            case SCHED_OTHER:
+               policyName= "SCHED_OTHER";
+               break;
+            case SCHED_FIFO:
+               policyName= "SCHED_FIFO";
+               break;
+            case SCHED_RR:
+               policyName= "SCHED_RR";
+               break;
+            default:
+               policy= SCHED_FIFO;
+               policyName= "SCHED_FIFO";
+               break;
+         }
+         INFO("set %s thread to policy %s (%d) priority %d", threadName, policyName, policy, priority);
+      }
+      rc= pthread_setschedparam(pthread_self(), policy, &param);
+      if ( rc )
+      {
+         ERROR("failed to set thread policy and priority: %d errno %d", rc, errno);
+      }
+   }
+
+   if ( threadName ) {
+       snprintf(name, 16, "%s", threadName);
+       rc = prctl(PR_SET_NAME, name, 0, 0, 0);
+       if (rc < 0) {
+          ERROR("failed to set thread name=%s: %d errno %d, %s", name, rc, errno, strerror(errno));
+       }
+   }
+
+   return rc;
+}
+
 static void wstOffloadSendBufferRelease( VideoServerConnection *conn, VideoFrame* f)
 {
    WstOffloadVideoFrameResources *r= 0;
@@ -1738,12 +1822,10 @@ static void *wstVideoServerConnectionThread( void *arg )
    int bufferIdRel;
    long long frameTime= 0;
    VideoFrame videoFrame;
-   char name[16];
-
-   snprintf(name, 16, "%s", "wstVServerConn");
-   prctl(PR_SET_NAME, name, 0, 0, 0);
 
    DEBUG("wstVideoServerConnectionThread: enter");
+
+   wstSetThreadNameAndPriority("wstVServerConn", "WESTEROS_GL_VSERVER_CONN_PRIORITY", SCHED_OTHER, 0);
 
    conn->zoomMode= -1;
    conn->zoomPolicyVersion= -1;
@@ -2470,12 +2552,10 @@ static void *wstVideoServerThread( void *arg )
 {
    int rc;
    VideoServerCtx *server= (VideoServerCtx*)arg;
-   char name[16];
-
-   snprintf(name, 16, "%s", "wstVServer");
-   prctl(PR_SET_NAME, name, 0, 0, 0);
 
    DEBUG("wstVideoServerThread: enter");
+
+   wstSetThreadNameAndPriority("wstVServer", NULL, SCHED_OTHER, 0);
 
    while( !server->server->threadStopRequested )
    {
@@ -3306,12 +3386,10 @@ static void *wstDisplayServerConnectionThread( void *arg )
    struct iovec iov[1];
    unsigned char mbody[256+3];
    int len;
-   char name[16];
-
-   snprintf(name, 16, "%s", "wstDispServerC");
-   prctl(PR_SET_NAME, name, 0, 0, 0);
 
    DEBUG("wstDisplayServerConnectionThread: enter");
+
+   wstSetThreadNameAndPriority("wstDispServerC", NULL, SCHED_OTHER, 0);
 
    conn->threadStarted= true;
    while( !conn->threadStopRequested )
@@ -3481,12 +3559,10 @@ static void *wstDisplayServerThread( void *arg )
 {
    int rc;
    DisplayServerCtx *server= (DisplayServerCtx*)arg;
-   char name[16];
-
-   snprintf(name, 16, "%s", "wstDispServer");
-   prctl(PR_SET_NAME, name, 0, 0, 0);
 
    DEBUG("wstDisplayServerThread: enter");
+
+   wstSetThreadNameAndPriority("wstDispServer", NULL, SCHED_OTHER, 0);
 
    while( !server->server->threadStopRequested )
    {
@@ -5743,13 +5819,11 @@ static void *wstRefreshThread( void *arg )
    #ifdef USE_EXTERNAL_STATS
    long long lastVblankTime= 0LL;
    #endif
-   char name[16];
-
-   snprintf(name, 16, "%s", "wstVRefresh");
-   prctl(PR_SET_NAME, name, 0, 0, 0);
 
    DEBUG("refresh thread start");
    ctx->refreshThreadStarted= true;
+
+   wstSetThreadNameAndPriority("wstVRefresh", "WESTEROS_GL_REFRESH_PRIORITY", SCHED_RR, 70);
 
    while( !ctx->refreshThreadStopRequested )
    {
@@ -5879,13 +5953,11 @@ static void *wstOffloadThread( void *arg )
    void *param_pvoid, *param_pvoid2;
    int rc;
    int fullness;
-   char name[16];
-
-   snprintf(name, 16, "%s", "wstVOffload");
-   prctl(PR_SET_NAME, name, 0, 0, 0);
 
    pMsgQ= &ctx->offloadMsgQ;
    DEBUG("offload thread started");
+
+   wstSetThreadNameAndPriority("wstVOffload", "WESTEROS_GL_OFFLOAD_PRIORITY", SCHED_OTHER, 0);
 
    ctx->offloadThreadStarted= true;
    while ( !ctx->offloadThreadStopRequested )
