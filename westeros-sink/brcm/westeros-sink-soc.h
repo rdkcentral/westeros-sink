@@ -34,6 +34,7 @@
 
 
 #define NUM_CAPTURE_SURFACES (NEXUS_SIMPLE_DECODER_MAX_SURFACES)
+#define SEGSTART_PTS_DIFF_WAIT_MAX_MS (3*1000)  /* making same as AUD_DEC_SEGSTART_DECODESTART_MAX_MS, decoder will wait for PTS under this value */
 
 struct _GstWesterosSinkSoc
 {
