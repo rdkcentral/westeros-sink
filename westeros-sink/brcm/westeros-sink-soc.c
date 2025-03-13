@@ -2829,7 +2829,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
             sink->currentPTS= ((gint64)videoStatus.pts)*2LL;
             if (sink->prevPositionSegmentStart != sink->positionSegmentStart)
             {
-               gint64 segStart90Khz= 90LL * sink->positionSegmentStart / GST_MSECOND + /*ceil*/ 1;
+               gint64 segStart90Khz= 90LL * sink->positionSegmentStart / GST_MSECOND;
                if ( sink->currentPTS == 0 || abs(sink->currentPTS - segStart90Khz) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90 )
                {
                   // sometimes the first PTS is not exactly 0, so
