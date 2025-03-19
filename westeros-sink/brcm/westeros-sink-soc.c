@@ -1673,34 +1673,41 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
    unsigned int pts45k= (unsigned int)( pts / 2 );
    NEXUS_VideoDecoderStatus videoStatus;
 
-   if ( NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) != NEXUS_SUCCESS )
+   if ( sink->soc.videoDecoder )
    {
-     /* if getting decoder status fails probably things are in
-        a really bad state, so avoid calling nexus */
-      GST_ERROR("NEXUS_SimpleVideoDecoder_GetStatus failed");
-      videoStatus.fifoDepth= 1;
-   }
-
-   if ( GST_STATE(GST_ELEMENT(sink)) == GST_STATE_PLAYING && ( videoStatus.fifoDepth || videoStatus.queueDepth ) )
-   {
-      GST_WARNING("Segment Event while playing, ignoring.  fifodepth: %d  frames: %d  decoderPts: %ums  pts45k: %ums  lastStartPts45k %ums",
-                           videoStatus.fifoDepth, videoStatus.queueDepth, videoStatus.pts/45, pts45k/45, sink->soc.lastStartPts45k/45 );
-   }
-   else
-   {
-      if ( pts == 0 )
+      if ( NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) != NEXUS_SUCCESS )
       {
-         GST_DEBUG("Flushing Decoder, will clear _SetStartPts");
-         NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
-         sink->soc.lastStartPts45k= 0;
+        /* if getting decoder status fails probably things are in
+           a really bad state, so avoid calling nexus */
+         GST_ERROR("NEXUS_SimpleVideoDecoder_GetStatus failed");
+         videoStatus.fifoDepth= 1;
+      }
+
+      if ( GST_STATE(GST_ELEMENT(sink)) == GST_STATE_PLAYING && ( videoStatus.fifoDepth || videoStatus.queueDepth ) )
+      {
+         GST_WARNING("Segment Event while playing, ignoring.  fifodepth: %d  frames: %d  decoderPts: %ums  pts45k: %ums  lastStartPts45k %ums",
+                              videoStatus.fifoDepth, videoStatus.queueDepth, videoStatus.pts/45, pts45k/45, sink->soc.lastStartPts45k/45 );
       }
       else
       {
-         GST_DEBUG("NEXUS_SimpleVideoDecoder_SetStartPts %ums", pts45k/45);
-         NEXUS_SimpleVideoDecoder_SetStartPts( sink->soc.videoDecoder, pts45k );
-         sink->soc.lastStartPts45k= pts45k;
-         sink->soc.chkBufToStartPts= TRUE;
+         if ( pts == 0 )
+         {
+            GST_DEBUG("Flushing Decoder, will clear _SetStartPts");
+            NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
+            sink->soc.lastStartPts45k= 0;
+         }
+         else
+         {
+            GST_DEBUG("NEXUS_SimpleVideoDecoder_SetStartPts %ums", pts45k/45);
+            NEXUS_SimpleVideoDecoder_SetStartPts( sink->soc.videoDecoder, pts45k );
+            sink->soc.lastStartPts45k= pts45k;
+            sink->soc.chkBufToStartPts= TRUE;
+         }
       }
+   }
+   else
+   {
+      GST_DEBUG_OBJECT(sink, "sink->soc.videoDecoder == NULL");
    }
 
    updateClientPlaySpeed(sink, sink->playbackRate, GST_STATE(GST_ELEMENT(sink)) == GST_STATE_PLAYING );
@@ -1739,7 +1746,14 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    }
    #endif
 
-   NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
+   if ( sink->soc.videoDecoder )
+   {
+      NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
+   }
+   else
+   {
+      GST_DEBUG_OBJECT(sink, "sink->soc.videoDecoder == NULL");
+   }
    LOCK(sink);
    sink->soc.captureCount= 0;
    sink->soc.frameCount= 0;
@@ -1773,11 +1787,18 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
        NEXUS_SurfaceHandle captureSurface= NULL;
        unsigned numReturned= 0;
        do {
-           NEXUS_SimpleVideoDecoder_GetCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, &captureStatus, 1, &numReturned);
-           if ( numReturned > 0 ) {
-               gint64 pts= ((gint64)captureStatus.pts)*2LL;
-               GST_DEBUG_OBJECT(sink, "Dropping frame at pts: %zd %"GST_TIME_FORMAT, pts, GST_TIME_ARGS((pts * GST_MSECOND) / 90LL));
-               NEXUS_SimpleVideoDecoder_RecycleCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, 1);
+           if ( sink->soc.videoDecoder )
+           {
+               NEXUS_SimpleVideoDecoder_GetCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, &captureStatus, 1, &numReturned);
+               if ( numReturned > 0 ) {
+                  gint64 pts= ((gint64)captureStatus.pts)*2LL;
+                  GST_DEBUG_OBJECT(sink, "Dropping frame at pts: %zd %"GST_TIME_FORMAT, pts, GST_TIME_ARGS((pts * GST_MSECOND) / 90LL));
+                  NEXUS_SimpleVideoDecoder_RecycleCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, 1);
+               }
+            }
+           else
+           {
+              GST_DEBUG_OBJECT(sink, "sink->soc.videoDecoder == NULL");
            }
        } while ( numReturned > 0 );
    }
@@ -2708,7 +2729,14 @@ static void processFrame( GstWesterosSink *sink )
    {
       sink->soc.captureCount++;
       captureSurface= 0;
-      NEXUS_SimpleVideoDecoder_GetCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, &captureStatus, 1, &numReturned);
+      if (sink->soc.videoDecoder)
+      {
+         NEXUS_SimpleVideoDecoder_GetCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, &captureStatus, 1, &numReturned);
+      }
+      else
+      {
+         GST_DEBUG_OBJECT(sink, "sink->soc.videoDecoder == NULL");
+      }
       if ( numReturned > 0 )
       {
          long long now= getCurrentTimeMillis();
@@ -2829,7 +2857,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
             sink->currentPTS= ((gint64)videoStatus.pts)*2LL;
             if (sink->prevPositionSegmentStart != sink->positionSegmentStart)
             {
-               gint64 segStart90Khz= 90LL * sink->positionSegmentStart / GST_MSECOND + /*ceil*/ 1;
+               gint64 segStart90Khz= 90LL * sink->positionSegmentStart / GST_MSECOND;
                if ( sink->currentPTS == 0 || abs(sink->currentPTS - segStart90Khz) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90 )
                {
                   // sometimes the first PTS is not exactly 0, so
@@ -4741,6 +4769,10 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       NEXUS_SurfaceComposition composition;
       NxClient_GetSurfaceClientComposition( sink->soc.surfaceClientId, &composition );
       composition.zorder= sink->zorder*MAX_ZORDER;
+      if ( sink->soc.usePip )
+      {
+         composition.zorder+=1; /* let's put the pip on top */
+      }
       rc= NxClient_SetSurfaceClientComposition( sink->soc.surfaceClientId, &composition );
       if ( rc != NEXUS_SUCCESS )
       {
