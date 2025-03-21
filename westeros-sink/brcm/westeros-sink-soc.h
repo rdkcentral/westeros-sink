@@ -87,6 +87,7 @@ struct _GstWesterosSinkSoc
    gboolean ignoreDiscontinuity;
    gboolean checkForEOS;
    gboolean emitEOS;
+   gint64 lastRenderPts;
    gboolean emitUnderflow;
    gboolean emitPTSError;
    gboolean emitResourceChange;

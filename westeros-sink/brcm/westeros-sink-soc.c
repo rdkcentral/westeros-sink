@@ -821,6 +821,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.ignoreDiscontinuity= FALSE;
    sink->soc.checkForEOS= FALSE;
    sink->soc.emitEOS= FALSE;
+   sink->soc.lastRenderPts=0;
    sink->soc.emitUnderflow= FALSE;
    sink->soc.emitPTSError= FALSE;
    sink->soc.emitResourceChange= FALSE;
@@ -1724,6 +1725,11 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
    }
    #endif
 
+   if ( GST_BUFFER_PTS_IS_VALID(buffer) &&  sink->soc.lastRenderPts < GST_BUFFER_PTS(buffer))
+   {
+      sink->soc.lastRenderPts= GST_BUFFER_PTS(buffer);
+   }
+
    if ( sink->soc.chkBufToStartPts && sink->soc.lastStartPts45k && GST_BUFFER_PTS_IS_VALID(buffer) )
    {
       guint bufferPtsMs= GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer));
@@ -1764,6 +1770,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.ignoreDiscontinuity= TRUE;
    sink->soc.checkForEOS= FALSE;
    sink->soc.emitEOS= FALSE;
+   sink->soc.lastRenderPts=0;
    sink->soc.emitUnderflow= FALSE;
    sink->soc.emitPTSError= FALSE;
    sink->soc.emitResourceChange= FALSE;
@@ -1792,7 +1799,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
                NEXUS_SimpleVideoDecoder_GetCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, &captureStatus, 1, &numReturned);
                if ( numReturned > 0 ) {
                   gint64 pts= ((gint64)captureStatus.pts)*2LL;
-                  GST_DEBUG_OBJECT(sink, "Dropping frame at pts: %zd %"GST_TIME_FORMAT, pts, GST_TIME_ARGS((pts * GST_MSECOND) / 90LL));
+                  GST_DEBUG_OBJECT(sink, "Dropping frame at pts: %"G_GINT64_FORMAT" %"GST_TIME_FORMAT, pts, GST_TIME_ARGS((pts * GST_MSECOND) / 90LL));
                   NEXUS_SimpleVideoDecoder_RecycleCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, 1);
                }
             }
@@ -1937,7 +1944,7 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
       NEXUS_VideoDecoderStatus videoStatus;
       if ( NEXUS_SUCCESS == NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) )
       {
-         if ( videoStatus.fifoDepth == 0 )
+         if ( videoStatus.fifoDepth == 0 || videoStatus.pts/45 >= GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts) )
          {
             sendEOS= TRUE;
          }
@@ -2065,6 +2072,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.checkForEOS= FALSE;
    sink->soc.emitEOS= FALSE;
+   sink->soc.lastRenderPts=0;
    sink->soc.emitUnderflow= FALSE;
    sink->soc.emitPTSError= FALSE;
    sink->soc.emitResourceChange= FALSE;
@@ -2869,7 +2877,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
                   sink->firstPTS= sink->currentPTS;
                }
                sink->prevPositionSegmentStart = sink->positionSegmentStart;
-               GST_DEBUG("SegmentStart changed! Updating first PTS to %zd ", sink->firstPTS);
+               GST_DEBUG("SegmentStart changed! Updating first PTS to 0x%"G_GUINT64_FORMAT" %ums ", sink->firstPTS, (guint)sink->firstPTS/90);
             }
             if ( sink->currentPTS != 0 || sink->soc.frameCount == 0 )
             {
@@ -2885,7 +2893,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
                   // We have a rollover: Adjust firstPTS to keep our running time correct.
                   sink->firstPTS= sink->currentPTS-(gint64)((uint32_t)sink->currentPTS-(uint32_t)prevPTS);
                   sink->firstPTS -= ((sink->position-sink->positionSegmentStart)*90LL+GST_MSECOND/2)/GST_MSECOND;
-                  GST_DEBUG("PTS rollover: (%zd to %zd) firstPTS now %zd", prevPTS, sink->currentPTS, sink->firstPTS);
+                  GST_DEBUG("PTS rollover: (%"G_GUINT64_FORMAT" to %"G_GINT64_FORMAT") firstPTS now %"G_GINT64_FORMAT"", prevPTS, sink->currentPTS, sink->firstPTS);
                }
                sink->position= sink->positionSegmentStart + ((sink->currentPTS - sink->firstPTS) * GST_MSECOND) / 90LL;
                if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
@@ -2902,6 +2910,12 @@ static void updateVideoStatus( GstWesterosSink *sink )
             if ( sink->soc.enableDecodeErrorSignal && (videoStatus.numDecodeErrors != sink->soc.prevNumDecodeErrors) )
             {
                sink->soc.emitDecodeError= TRUE;
+            }
+            if ( sink->eosEventSeen && videoStatus.pts/45 >= GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts) )
+            {
+               GST_INFO("LastPts acheived: emitting EOS");
+               sink->soc.emitEOS= TRUE;
+               sink->soc.checkForEOS= FALSE;
             }
 
             sink->soc.frameCount++;
@@ -2986,7 +3000,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
       int limit= EOS_DETECT_DELAY;
       if ( sink->soc.noFrameCount*FRAME_POLL_TIME > limit )
       {
-         GST_INFO_OBJECT(sink, "updateVideoStatus: eos detected: firstPTS %zd currentPTS %zd", sink->firstPTS, sink->currentPTS);
+         GST_INFO_OBJECT(sink, "updateVideoStatus: eos detected: firstPTS %"G_GINT64_FORMAT" currentPTS %"G_GINT64_FORMAT"", sink->firstPTS, sink->currentPTS);
          sink->eosEventSeen= TRUE;
          gst_westeros_sink_eos_detected( sink );
          sink->soc.noFrameCount= 0;
@@ -3215,7 +3229,7 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
                    }
                 }
 
-                GST_LOG("Video decoder status queried: pts %x fifoDepth %u", pts, fifoDepth);
+                GST_LOG("Video decoder status queried: pts %x %ums fifoDepth %u", pts, pts/45, fifoDepth);
 
                 g_value_init(&val, G_TYPE_UINT);
 
@@ -3277,24 +3291,31 @@ static void underflowCallback( void *userData, int n )
       {
          if ( !sink->soc.useImmediateOutput )
          {
-            GST_INFO("underflow: EOS: %d qDepth %d presStarted %d ignoreDisc %d bytesDecoded %zu PTS 0x%x",
+            GST_INFO("underflow: EOS: %d qDepth %d presStarted %d ignoreDisc %d bytesDecoded %"G_GUINT64_FORMAT" PTS 0x%x %ums positionSegmentStart %ums lastRenderPts %ums",
                      sink->eosEventSeen, videoStatus.queueDepth, sink->soc.presentationStarted, sink->soc.ignoreDiscontinuity,
-                     videoStatus.numBytesDecoded, videoStatus.pts);
+                     videoStatus.numBytesDecoded, videoStatus.pts, videoStatus.pts/45, (guint)GST_TIME_AS_MSECONDS(sink->positionSegmentStart), (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
          }
          LOCK(sink);
          if ( sink->eosEventSeen )
          {
-            if ( videoStatus.queueDepth > 0 )
+            if (sink->positionSegmentStart && GST_TIME_AS_MSECONDS(sink->positionSegmentStart) >= videoStatus.pts/45 && !videoStatus.numDisplayUnderflows)
             {
-               sink->soc.checkForEOS= TRUE;
-               sink->eosEventSeen= FALSE;
-               sink->soc.noFrameCount= 0;
+               GST_INFO("Ignoring spurious fifoEmpty, decoder not yet decoding segment.  positionSegmentStart %ums videoStatus.pts %ums numDisplayUnderflows %u",(guint) GST_TIME_AS_MSECONDS(sink->positionSegmentStart), videoStatus.pts/45, videoStatus.numDisplayUnderflows);
             }
             else
             {
-               GST_INFO("underflow: emitting EOS");
-               sink->soc.emitEOS= TRUE;
-               sink->soc.checkForEOS= FALSE;
+               if ( videoStatus.queueDepth > 0 )
+               {
+                  sink->soc.checkForEOS= TRUE;
+                  sink->eosEventSeen= FALSE;
+                  sink->soc.noFrameCount= 0;
+               }
+               else
+               {
+                  GST_INFO("underflow: emitting EOS");
+                  sink->soc.emitEOS= TRUE;
+                  sink->soc.checkForEOS= FALSE;
+               }
             }
          }
          else
@@ -4830,7 +4851,7 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
       {
          NEXUS_Error rc;
          rc= NEXUS_SimpleStcChannel_Freeze(sink->soc.stcChannel, TRUE);
-         GST_DEBUG("NEXUS_SimpleStcChannel_Freeze FALSE ");
+         GST_DEBUG("NEXUS_SimpleStcChannel_Freeze TRUE ");
          if ( rc != NEXUS_SUCCESS )
          {
             GST_ERROR("sinkReleaseVideo: NEXUS_SimpleStcChannel_Freeze FALSE failed: %d", (int)rc);
