@@ -2865,12 +2865,11 @@ static void updateVideoStatus( GstWesterosSink *sink )
             sink->currentPTS= ((gint64)videoStatus.pts)*2LL;
             if (sink->prevPositionSegmentStart != sink->positionSegmentStart)
             {
-               gint64 segStart90Khz= 90LL * sink->positionSegmentStart / GST_MSECOND;
-               if ( sink->currentPTS == 0 || abs(sink->currentPTS - segStart90Khz) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90 )
+               if ( sink->currentPTS == 0 || (sink->currentPTS - sink->startPTS) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90 )
                {
                   // sometimes the first PTS is not exactly 0, so
                   // if segStart - first PTS is small, take the segment start as the base for the position
-                  sink->firstPTS= segStart90Khz;
+                  sink->firstPTS= sink->startPTS;
                }
                else
                {
@@ -2881,12 +2880,13 @@ static void updateVideoStatus( GstWesterosSink *sink )
             }
             if ( sink->currentPTS != 0 || sink->soc.frameCount == 0 )
             {
-               if ( (sink->currentPTS < sink->firstPTS) && (sink->currentPTS > 90000) )
+               if ( (sink->currentPTS < sink->firstPTS) && (sink->currentPTS > 90000) && prevPTS )
                {
                   // If we have hit a discontinuity that doesn't look like rollover, then
                   // treat this as the case of looping a short clip.  Adjust our firstPTS
                   // to keep our running time correct.
                   sink->firstPTS= sink->firstPTS-(prevPTS-sink->currentPTS);
+                  GST_DEBUG("Disco change setting firstPTS %ums", (guint)sink->firstPTS/90);
                }
                else if ( (sink->currentPTS < prevPTS) && (prevPTS > (0x1FFFFFFFFLL-90000LL)) )
                {
