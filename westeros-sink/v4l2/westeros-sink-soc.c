@@ -215,6 +215,7 @@ static int sinkAcquireVideo( GstWesterosSink *sink );
 static void sinkReleaseVideo( GstWesterosSink *sink );
 static GstStructure *wstSinkGetStats( GstWesterosSink * sink );
 static gboolean processEventSinkSoc( GstWesterosSink *sink, GstPad *pad, GstEvent *event, gboolean *passToDefault);
+static gint64 nanoTimeToPTS(gint64 nanoTime);
 
 #ifdef USE_AMLOGIC_MESON
 #include "meson_drm.h"
@@ -226,6 +227,20 @@ static gboolean processEventSinkSoc( GstWesterosSink *sink, GstPad *pad, GstEven
 #endif
 #include "svp/aml-meson/svp-util.c"
 #endif
+
+static gint64 nanoTimeToPTS(gint64 nanoTime)
+{
+   // Convert to pts avoiding potential overflow
+   guint64 pts = nanoTime; // use an unsigned integer
+   pts /= GST_MSECOND;
+   pts *= 90ULL;
+
+   guint64 remainder = nanoTime % GST_MSECOND;
+   remainder *= 90ULL;
+   remainder /= GST_MSECOND;
+
+   return (gint64)(pts + remainder);
+}
 
 static long long getCurrentTimeMillis(void)
 {
@@ -5392,7 +5407,8 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                               gint64 currentNano= frameTime*1000LL;
                               gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
                               sink->position= sink->positionSegmentStart + currentNano - firstNano;
-                              sink->currentPTS= currentNano * 90LL / GST_MSECOND;
+                              sink->currentPTS = nanoTimeToPTS(currentNano);
+
                               GST_DEBUG("receive frameTime: %lld position %lld PTS %lld", currentNano, sink->position, sink->currentPTS);
 
                               if (sink->soc.frameOutCount > 0 )
@@ -6936,7 +6952,8 @@ capture_start:
                /* If we are not connected to a video server, set position here */
                gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
                sink->position= sink->positionSegmentStart + frameTime - firstNano;
-               sink->currentPTS= frameTime * 90LL / GST_MSECOND;
+               sink->currentPTS = nanoTimeToPTS(frameTime);
+
                if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
                {
                   sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
