@@ -2865,14 +2865,18 @@ static void updateVideoStatus( GstWesterosSink *sink )
             sink->currentPTS= ((gint64)videoStatus.pts)*2LL;
             if (sink->prevPositionSegmentStart != sink->positionSegmentStart)
             {
-               if ( sink->currentPTS == 0 || (sink->currentPTS - sink->startPTS) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90 )
+               gboolean useStartPTS = (sink->currentPTS > sink->startPTS) && ((sink->currentPTS - sink->startPTS) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90LL);
+               GST_DEBUG("currentPTS %"G_GINT64_FORMAT" %"G_GINT64_FORMAT"ms  startPTS %"G_GINT64_FORMAT" %"G_GINT64_FORMAT"ms  useStartPTS %d", sink->currentPTS, sink->currentPTS/90LL, sink->startPTS, sink->startPTS/90LL, useStartPTS);
+               if ( sink->currentPTS == 0 || useStartPTS)
                {
                   // sometimes the first PTS is not exactly 0, so
                   // if segStart - first PTS is small, take the segment start as the base for the position
+                  GST_LOG("firstPTS  setting to  startPTS %"G_GINT64_FORMAT" %ums", sink->startPTS, (guint)(sink->startPTS/90LL));
                   sink->firstPTS= sink->startPTS;
                }
                else
                {
+                  GST_LOG("firstPTS  setting to  currentPTS %"G_GINT64_FORMAT" %ums", sink->currentPTS, (guint)(sink->currentPTS/90LL));
                   sink->firstPTS= sink->currentPTS;
                }
                sink->prevPositionSegmentStart = sink->positionSegmentStart;
