@@ -1891,6 +1891,21 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       sink->eosEventSeen= FALSE;
    }
    rc= NEXUS_SimpleVideoDecoder_Start(sink->soc.videoDecoder, &startSettings);
+
+   #define OOM_RETRY_SLEEP_MS (10)  /* on platforms sharing HPA with kernel, might need to retry a few times to get the memory from kernel */
+   #define OOM_RETRY_NUM (25)       /* retry for 250ms, normally will succeed 50-100ms */
+   int tries= OOM_RETRY_NUM;
+   while ( rc == NEXUS_OUT_OF_DEVICE_MEMORY && tries--)
+   {
+//      GST_DEBUG("gst_westeros_sink_soc_start_video: NEXUS_SimpleVideoDecoder_Start failed: %d tries %d", (int)rc, tries);
+      usleep(OOM_RETRY_SLEEP_MS*1000);
+      rc= NEXUS_SimpleVideoDecoder_Start(sink->soc.videoDecoder, &startSettings);
+      if ( rc == NEXUS_SUCCESS )
+      {
+         GST_WARNING("gst_westeros_sink_soc_start_video: NEXUS_SimpleVideoDecoder_Start succeeded on try %d ~%dms", OOM_RETRY_NUM-tries,  (OOM_RETRY_NUM-tries)*OOM_RETRY_SLEEP_MS);
+      }
+   }
+
    if ( rc != NEXUS_SUCCESS )
    {
       GST_ERROR("gst_westeros_sink_soc_start_video: NEXUS_SimpleVideoDecoder_Start failed: %d", (int)rc);
