@@ -914,7 +914,11 @@ WstCompositor* WstCompositorCreate()
       ctx= (WstContext*)calloc( 1, sizeof(WstContext) );
       if ( ctx )
       {
-         pthread_mutex_init( &ctx->mutex, 0 );
+         pthread_mutexattr_t attr;
+         pthread_mutexattr_init(&attr);
+         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+         pthread_mutex_init( &ctx->mutex, &attr );
+         pthread_mutexattr_destroy(&attr);
 
          ctx->frameRate= DEFAULT_FRAME_RATE;
          ctx->framePeriodMillis= (1000/ctx->frameRate);
