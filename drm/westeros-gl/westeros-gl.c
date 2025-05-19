@@ -2036,6 +2036,7 @@ static void *wstVideoServerConnectionThread( void *arg )
                                  videoFrame.vf= 0;
                                  videoFrame.canExpire= true;
                                  videoFrame.dropped= false;
+                                 videoFrame.kept= false;
                                  videoFrame.advanced= false;
                                  conn->videoPlane->hidden= false;
                                  wstVideoFrameManagerPushFrame( conn->videoPlane->vfm, &videoFrame );
