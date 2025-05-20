@@ -693,5 +693,12 @@ bool WstCompositorHasSurface( WstCompositor *wctx, int surfaceId );
  */
 bool WstCompositorGetSurfaceIds( WstCompositor *wctx, std::vector<int> &surfaceIds );
 
+/**
+ * WstCompositorResetFirstFrame
+ *
+ * resets the first frame event
+ */
+bool WstCompositorResetFirstFrame( WstCompositor *wctx);
+
 #endif
 
