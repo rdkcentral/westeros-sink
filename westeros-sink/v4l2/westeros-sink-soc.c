@@ -6521,6 +6521,60 @@ static int wstFindCurrentVideoBuffer( GstWesterosSink *sink )
    return buffIndex;
 }
 
+
+/**
+ * wstCheckAndCompleteAsyncStateChangeToPaused:
+ * This function checks whether there's a pending state change to PAUSED that is waiting for preroll to complete, and 
+ * then completes the async state change.
+ * 
+ * Since westeros-sink is both a decoder and a sink, it doesn't fit the standard basesink expectations related to prerolling. It sometimes needs to accept
+ * multiple encoded buffers, decode one or more frames (potentially out of order), then notify preroll complete when the first in-segment frame is decoded
+ * and ready to be displayed. This funtion is a wrapper around the necessary base-sink manipulations necessary to complete the async state change to PAUSED.
+ */
+
+static void wstCheckAndCompleteAsyncStateChangeToPaused(GstBaseSink * bs)
+{
+   GST_BASE_SINK_PREROLL_LOCK(bs);
+   GST_DEBUG("need_preroll %d have_preroll %d", bs->need_preroll, bs->have_preroll);
+   if ( bs->need_preroll )
+   {
+      GstState cur, nxt, pend;
+      bs->need_preroll= FALSE;
+      bs->have_preroll= TRUE;
+      GST_OBJECT_LOCK(bs);
+      cur= GST_STATE(bs);
+      nxt= GST_STATE_NEXT(bs);
+      pend= GST_STATE_PENDING(bs);
+      GST_DEBUG("states: cur(%s) next(%s) pending(%s)",
+                gst_element_state_get_name(cur),
+                gst_element_state_get_name(nxt),
+                gst_element_state_get_name(pend));
+      
+      if(GST_STATE_PAUSED == pend)
+      {
+         // Base-sink thinks preroll is incomplete and state change to PAUSED is still pending. Complete async state change to PAUSED now
+         g_print("westeros-sink: indicate async-done\n");
+         GST_STATE(bs)= pend;
+         GST_STATE_NEXT(bs)= GST_STATE_PENDING(bs)= GST_STATE_VOID_PENDING;
+         GST_STATE_RETURN(bs)= GST_STATE_CHANGE_SUCCESS;
+         GST_OBJECT_UNLOCK(bs);
+         GST_DEBUG("posting state change: curr(%s) next(%s) pending(%s)",
+                   gst_element_state_get_name(cur),
+                   gst_element_state_get_name(nxt),
+                   gst_element_state_get_name(pend));
+         gst_element_post_message(GST_ELEMENT_CAST(bs), gst_message_new_state_changed(GST_OBJECT_CAST(bs), cur, nxt, pend));
+         GST_DEBUG("posting async done");
+         gst_element_post_message(GST_ELEMENT_CAST(bs), gst_message_new_async_done(GST_OBJECT_CAST(bs), GST_CLOCK_TIME_NONE));
+         GST_STATE_BROADCAST(bs)
+      }
+      else
+      {
+         GST_OBJECT_UNLOCK(bs);
+      }
+   }
+   GST_BASE_SINK_PREROLL_UNLOCK(bs);
+}
+
 static gpointer wstVideoOutputThread(gpointer data)
 {
    GstWesterosSink *sink= (GstWesterosSink*)data;
@@ -6970,6 +7024,13 @@ capture_start:
                 sink->soc.emitFirstFrameSignal= TRUE;
             }
             ++sink->soc.frameOutCount;
+            if(1 == sink->soc.frameOutCount)
+            {
+               //This is the first in-segment frame. Check if we need to notify preroll complete and complete async state change.
+               UNLOCK(sink);
+               wstCheckAndCompleteAsyncStateChangeToPaused(GST_BASE_SINK(sink));
+               LOCK(sink);
+            }
 
             if ( !sink->soc.useGfxSync || !sink->soc.conn )
             {
