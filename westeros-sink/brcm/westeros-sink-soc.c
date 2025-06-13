@@ -70,6 +70,23 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
 
 #define postDecodeError( sink ) postErrorMessage( (sink), GST_STREAM_ERROR_DECODE, "video decode error" )
 
+
+/* Often need to log the decoder to figure out what's going on, use this macro, add remove status as necessary */
+/* Using macro inserts function and line number in log */
+#define LOG_VIDEODECODER_STATUS(FUNC, format, ...) \
+{ \
+   if (sink->soc.videoDecoder) \
+   {   \
+   NEXUS_VideoDecoderStatus videoStatus;  \
+   NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus ); \
+   guint stc; \
+   NEXUS_SimpleStcChannel_GetStc(sink->soc.stcChannel, &stc); \
+   FUNC(""format" decStatus stc 0x%x %ums  pts 0x%x %ums  decoded %u display %u qDepth %u decErr %u inErr %u ",\
+      __VA_ARGS__, stc, stc/45, videoStatus.pts, videoStatus.pts/45, videoStatus.numDecoded, videoStatus.numDisplayed, videoStatus.queueDepth, videoStatus.numDecodeErrors, videoStatus.numDecodeErrors); \
+   } \
+} \
+
+
 enum
 {
   PROP_VIDEO_PTS_OFFSET= PROP_SOC_BASE,
@@ -1524,6 +1541,7 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
    {
       NEXUS_Error rc;
       rc= NEXUS_SimpleStcChannel_Freeze(sink->soc.stcChannel, TRUE);
+      GST_DEBUG("NEXUS_SimpleStcChannel_Freeze TRUE");
       if ( rc != NEXUS_SUCCESS )
       {
          GST_ERROR("gst_westeros_sink_soc_playing_to_paused: NEXUS_SimpleStcChannel_Freeze TRUE failed: %d", (int)rc);
@@ -1757,6 +1775,12 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 
    if ( sink->soc.videoDecoder )
    {
+      /* if flushing, should be paused, need ChannelChangeMode_eMute for VPEEK frameStep, else decoder will auto display first frame and not wait for step */
+      NEXUS_VideoDecoderSettings settings;
+      NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &settings);
+      GST_DEBUG("channelChangeMode %d setting %d", settings.channelChangeMode, NEXUS_VideoDecoder_ChannelChangeMode_eMute);
+      settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eMute;
+      NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
       NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
    }
    else
@@ -1919,6 +1943,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    if ( sink->soc.stcChannel )
    {
       rc= NEXUS_SimpleStcChannel_Freeze(sink->soc.stcChannel, GST_STATE(GST_ELEMENT(sink)) != GST_STATE_PLAYING ? TRUE : FALSE);
+      GST_DEBUG("NEXUS_SimpleStcChannel_Freeze %d", GST_STATE(GST_ELEMENT(sink)) != GST_STATE_PLAYING ? TRUE : FALSE);
       if ( rc != NEXUS_SUCCESS )
       {
          goto exit;
@@ -3251,7 +3276,7 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
                    }
                 }
 
-                GST_LOG("Video decoder status queried: pts %x %ums fifoDepth %u", pts, pts/45, fifoDepth);
+                LOG_VIDEODECODER_STATUS(GST_DEBUG, "Video decoder status queried: fifoDepth %u ", fifoDepth);
 
                 g_value_init(&val, G_TYPE_UINT);
 
@@ -3538,13 +3563,15 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
 
    if ( clientPlaySpeed <= MAX_STC_PLAY_RATE )
    {
-      rc= NEXUS_SimpleStcChannel_SetRate(sink->soc.stcChannel, clientPlaySpeed*100, 100-1);
+      rc= NEXUS_SimpleStcChannel_SetRate(sink->soc.stcChannel, (guint)(clientPlaySpeed*100), 100-1);
+      GST_DEBUG("NEXUS_SimpleStcChannel_SetRate (%u, %u)", (guint)(clientPlaySpeed*100), (guint)(100-1));
       if ( rc != NEXUS_SUCCESS)
       {
          GST_ERROR("updateClientPlaySpeed: NEXUS_SimpleStcChannel_SetRate failed: %d", (int)rc);
       }
    }
    rc= NEXUS_SimpleStcChannel_Freeze(sink->soc.stcChannel, (clientPlaySpeed == 0.0 || !playing) ? TRUE : FALSE);
+   GST_DEBUG("NEXUS_SimpleStcChannel_Freeze %d", (clientPlaySpeed == 0.0 || !playing) ? TRUE : FALSE);
    if ( rc != NEXUS_SUCCESS )
    {
       GST_ERROR("updateClientPlaySpeed: NEXUS_SimpleStcChannel_Freeze failed: %d", (int)rc);
@@ -3588,16 +3615,28 @@ static void frameStep(GstWesterosSink *sink)
 {
    if ( sink->videoStarted && !sink->soc.videoPlaying && sink->soc.stcChannel )
    {
-      guint next_pts;
-      if ( NEXUS_SimpleVideoDecoder_GetNextPts(sink->soc.videoDecoder, &next_pts) )
+      #define STEP_RETRY_SLEEP_MS (5) /* if GetNextPts fails, retry for 100ms, since there should be data inflight if app asked to step */
+      #define STEP_RETRY_NUM      (20)
+      guint next_pts=0;
+      NEXUS_Error rc= NEXUS_SimpleVideoDecoder_GetNextPts(sink->soc.videoDecoder, &next_pts);
+      int retry_cnt= STEP_RETRY_NUM;
+      while( rc && retry_cnt-- )
+      {
+         LOG_VIDEODECODER_STATUS(GST_INFO, "Next PTS not yet available cnt %d", retry_cnt);
+         usleep(STEP_RETRY_SLEEP_MS*1000);
+         rc= NEXUS_SimpleVideoDecoder_GetNextPts(sink->soc.videoDecoder, &next_pts);
+      }
+      if ( rc )
       {
          GST_WARNING("Cannot frame advance. Next PTS not available yet.");
          return;
       }
+      LOG_VIDEODECODER_STATUS(GST_DEBUG," next_pts 0x%x %ums",  next_pts,next_pts/45);
+
       NEXUS_SimpleStcChannelSettings stcSettings;
       NEXUS_SimpleStcChannel_GetSettings(sink->soc.stcChannel, &stcSettings);
-
       guint newStc= next_pts + stcSettings.modeSettings.Auto.offsetThreshold;
+      GST_LOG("NEXUS_SimpleStcChannel_SetStc 0x%x %dms", newStc, newStc/45);
       if ( NEXUS_SimpleStcChannel_SetStc(sink->soc.stcChannel, newStc) )
       {
          GST_ERROR_OBJECT(sink, "Error NEXUS_SimpleStcChannel_SetStc failed");
