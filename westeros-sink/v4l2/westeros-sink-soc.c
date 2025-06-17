@@ -6539,8 +6539,6 @@ static void wstCheckAndCompleteAsyncStateChangeToPaused(GstBaseSink * bs)
    if ( bs->need_preroll )
    {
       GstState cur, nxt, pend;
-      bs->need_preroll= FALSE;
-      bs->have_preroll= TRUE;
       GST_OBJECT_LOCK(bs);
       cur= GST_STATE(bs);
       nxt= GST_STATE_NEXT(bs);
@@ -6554,6 +6552,8 @@ static void wstCheckAndCompleteAsyncStateChangeToPaused(GstBaseSink * bs)
       {
          // Base-sink thinks preroll is incomplete and state change to PAUSED is still pending. Complete async state change to PAUSED now
          g_print("westeros-sink: indicate async-done\n");
+         bs->need_preroll= FALSE;
+         bs->have_preroll= TRUE;
          GST_STATE(bs)= pend;
          GST_STATE_NEXT(bs)= GST_STATE_PENDING(bs)= GST_STATE_VOID_PENDING;
          GST_STATE_RETURN(bs)= GST_STATE_CHANGE_SUCCESS;
