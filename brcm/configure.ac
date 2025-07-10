@@ -1,31 +1,30 @@
 #
-# If not stated otherwise in this file or this component's Licenses.txt file the
-# following copyright and licenses apply:
+# Copyright (C) 2016 RDK Management
 #
-# Copyright 2016 RDK Management
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation;
+# version 2.1 of the License.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
 #
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #
 
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
 dnl AC_PREREQ([2.65])
-AC_INIT(westeros-soc, version-1.0, jeff_wannamaker@cable.comcast.com,westeros-soc)
+AC_INIT(westeros-sink, version-1.0, jeff_wannamaker@cable.comcast.com,westeros-sink)
 AC_CONFIG_SRCDIR([])
-AC_CONFIG_HEADERS([cfg/config.h])
+AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
-AC_CONFIG_AUX_DIR([cfg])
+AC_CONFIG_AUX_DIR([.])
 AM_INIT_AUTOMAKE([foreign no-dist-gzip dist-bzip2 1.9])
 LT_INIT
 
@@ -43,32 +42,7 @@ AC_TYPE_SIZE_T
 AC_HEADER_STDBOOL
 
 IARM_CFLAGS=" "
-
-NXCLIENT_LOCAL=" "
-AC_ARG_ENABLE([nxclient_local],
-        AS_HELP_STRING([--enable-nxclient_local],[enable local nxclient ]),
-        [
-          case "${enableval}" in
-           yes) NXCLIENT_LOCAL=true ;;
-           no) NXCLIENT_LOCAL=false ;;
-          *) AC_MSG_ERROR([bad value ${enableval} for --enable-nxclient_local ]) ;;
-           esac
-           ],
-         [echo "local nxclient is enable"])
-AM_CONDITIONAL([NXCLIENT_LOCAL], [test x$NXCLIENT_LOCAL = xtrue])
-AC_SUBST(NXCLIENT_LOCAL)
-
-AC_ARG_ENABLE([brcmwaylandegl],
-              AS_HELP_STRING([--enable-brcmwaylandegl],[enable brcm wayland egl (default is no)]),
-              [
-                case "${enableval}" in
-                 yes) ENABLE_BRCM_WAYLANDEGL=true ;;
-                  no) ENABLE_BRCM_WAYLANDEGL=false ;;
-                   *) AC_MSG_ERROR([bad value ${enableval} for --enable-brcmwaylandegl]) ;;
-                esac
-              ],
-              [echo "use of brcm wayland-egl is disabled"])
-AM_CONDITIONAL([ENABLE_BRCM_WAYLANDEGL], [test x$ENABLE_BRCM_WAYLANDEGL = xtrue])
+GST_VIDEO_DETECTED=" "
 
 # Checks for library functions.
 #Add the subdirectories to be considered for building.
@@ -78,10 +52,52 @@ m4_ifdef([AM_SILENT_RULES],[AM_SILENT_RULES([yes])],
 [AM_DEFAULT_VERBOSITY=1
 AC_SUBST(AM_DEFAULT_VERBOSITY)])
 
+dnl GStreamer version. Use 0.10 by default
+AC_ARG_ENABLE(gstreamer1,
+              AS_HELP_STRING([--enable-gstreamer1],
+                             [Use GStreamer 1.x]), ,
+              [enable_gstreamer1=auto])
+
+AS_IF([test "x$enable_gstreamer1" = "xyes"], [
+  GST_MAJORMINOR=1.0
+  PKG_CHECK_MODULES([GST], [gstreamer-1.0 >= 1.4], have_gst1="yes", have_gst1="no")
+
+  AS_IF([test "x$have_gst1" = "xyes"], [
+    PKG_CHECK_MODULES([GSTBASE], [gstreamer-base-1.0 >= 1.4])
+    PKG_CHECK_MODULES([GSTVIDEO], [gstreamer-video-1.0 >= 1.4],[GST_VIDEO_DETECTED=true],[GST_VIDEO_DETECTED=false])
+    AC_DEFINE(USE_GST1, 1, [Build with GStreamer 1.x])
+  ], [])
+], [])
+
+AS_IF([test "x$enable_gstreamer1" = "xyes" -a "x$have_gst1" != "xyes"], [
+   AC_MSG_ERROR([Could not find GStreamer 1.x dependencies:
+
+$GST_PKG_ERRORS])], [])
+
+AS_IF([test "x$have_gst1" != "xyes"], [
+  GST_MAJORMINOR=0.10
+  PKG_CHECK_MODULES([GST], [gstreamer-0.10 >= 0.10.28])
+  PKG_CHECK_MODULES([GSTBASE], [gstreamer-base-0.10 >= 0.10.28])
+], [])
+
+AC_ARG_ENABLE(pipeline-logger,
+  AS_HELP_STRING([--enable-pipeline-logger], [Enable pipeline logger]),
+  [case "${enableval}" in
+        yes) pipeline_logger=true ;;
+        no)  pipeline_logger=false ;;
+        *) AC_MSG_ERROR([bad value ${enableval} for --enable-pipeline-logger]) ;;
+    esac],
+  [pipeline_logger=false])
+
+plugindir="\$(libdir)/gstreamer-$GST_MAJORMINOR"
+
 PKG_CHECK_MODULES([GLIB],[glib-2.0 >= 2.22.5])
 PKG_CHECK_MODULES([GTHREAD],[gthread-2.0 >= 2.38.2])
 PKG_CHECK_MODULES([WAYLAND_CLIENT],[wayland-client >= 1.6.0])
 PKG_CHECK_MODULES([WAYLAND_SERVER],[wayland-server >= 1.6.0])
+
+AM_CONDITIONAL([HAVE_GST_VIDEO], [test x$GST_VIDEO_DETECTED = xtrue])
+AM_CONDITIONAL([HAVE_PIPELINE_LOGGING], [test x$pipeline_logger = xtrue])
 
 WAYLANDLIB="-lwayland-client"
 AC_SUBST(WAYLANDLIB)
@@ -89,6 +105,6 @@ AC_SUBST(WAYLANDLIB)
 AC_CONFIG_FILES([Makefile])
 AC_SUBST(WAYLAND_CFLAGS)
 AC_SUBST(GUPNP_VERSION)
+AC_SUBST(GST_MAJORMINOR)
 AC_SUBST(plugindir)
 AC_OUTPUT
-
