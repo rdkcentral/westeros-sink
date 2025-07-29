@@ -79,8 +79,10 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
    {   \
    NEXUS_VideoDecoderStatus videoStatus;  \
    NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus ); \
-   guint stc; \
-   NEXUS_SimpleStcChannel_GetStc(sink->soc.stcChannel, &stc); \
+   guint stc=0; \
+   if (sink->soc.stcChannel) { \
+      NEXUS_SimpleStcChannel_GetStc(sink->soc.stcChannel, &stc); \
+   }  \
    FUNC(""format" decStatus stc 0x%x %ums  pts 0x%x %ums  decoded %u display %u qDepth %u decErr %u inErr %u ",\
       __VA_ARGS__, stc, stc/45, videoStatus.pts, videoStatus.pts/45, videoStatus.numDecoded, videoStatus.numDisplayed, videoStatus.queueDepth, videoStatus.numDecodeErrors, videoStatus.numDecodeErrors); \
    } \
