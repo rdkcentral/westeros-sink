@@ -2060,6 +2060,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
             NEXUS_VideoDynamicRangeMode tempMode= displaySettings.hdmiPreferences.dynamicRangeMode;
             displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eSdr;
             NxClient_SetDisplaySettings(&displaySettings);
+            NxClient_GetDisplaySettings(&displaySettings);
             displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eTrackInput;
             NxClient_SetDisplaySettings(&displaySettings);
             GST_INFO("Reset dynamicRangeMode to TrackInput from %d ", tempMode);
@@ -2092,6 +2093,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
             displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eSdr;
             NxClient_SetDisplaySettings(&displaySettings);
             GST_WARNING("sinkSocStopVideo: reset to SDR from : %d",tempMode);
+            NxClient_GetDisplaySettings(&displaySettings);
             displaySettings.hdmiPreferences.dynamicRangeMode= tempMode;
             NxClient_SetDisplaySettings(&displaySettings);
          }
