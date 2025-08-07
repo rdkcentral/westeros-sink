@@ -32,6 +32,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/prctl.h>
+#include <dlfcn.h>
 
 #ifdef USE_GST_VIDEO
 #include <gst/video/video-color.h>
@@ -52,6 +53,9 @@
 
 #define DEFAULT_DEVICE_NAME "/dev/video10"
 #define DEFAULT_VIDEO_SERVER "video"
+
+#define SYSFS_DISPLAY_VINFO "/sys/class/display/vinfo"
+#define SYSFS_VIDEO_AXIS "/sys/class/video/axis"
 
 #define DEFAULT_FRAME_WIDTH (640)
 #define DEFAULT_FRAME_HEIGHT (360)
@@ -112,7 +116,8 @@ enum
   PROP_QUEUED_FRAMES,
   PROP_VFRAME_SOURCE_TYPE,
   PROP_STOP_KEEP_FRAME,
-  PROP_STATS
+  PROP_STATS,
+  PROP_LOW_LATENCY_MODE
 };
 enum
 {
@@ -134,6 +139,23 @@ enum
    ZOOM_GLOBAL
 };
 
+enum vcodec_format
+{
+    VCODEC_FORMAT_AVC = 0,
+    VCODEC_FORMAT_AV1 = 1
+};
+
+struct vcodec
+{
+	void *handle;
+	void * ext_handle;
+	void * (*vcodec_ext_init)(enum vcodec_format, const char *);
+	void * (*vcodec_ext_init_ll_avc)();
+	void * (*vcodec_ext_init_ll_av1)();
+	void (*vcodec_ext_destroy)(void *);
+	int (*vcodec_ext_write)(void *, void *, int);
+};
+
 #define needBounds(sink) ( sink->soc.forceAspectRatio || (sink->soc.zoomMode != ZOOM_NONE) )
 
 static bool g_frameDebug= false;
@@ -141,6 +163,8 @@ static const char *gDeviceName= DEFAULT_DEVICE_NAME;
 static guint g_signals[MAX_SIGNAL]= {0};
 
 static gboolean (*queryOrg)(GstElement *element, GstQuery *query)= 0;
+
+static struct vcodec *g_vcodec = NULL;
 
 static void wstSinkSocStopVideo( GstWesterosSink *sink );
 static void wstBuildSinkCaps( GstWesterosSinkClass *klass, GstWesterosSink *dummySink );
@@ -216,6 +240,11 @@ static void sinkReleaseVideo( GstWesterosSink *sink );
 static GstStructure *wstSinkGetStats( GstWesterosSink * sink );
 static gboolean processEventSinkSoc( GstWesterosSink *sink, GstPad *pad, GstEvent *event, gboolean *passToDefault);
 static gint64 nanoTimeToPTS(gint64 nanoTime);
+static bool wstLowLatencyModeInit(GstWesterosSink *sink);
+static void wstLowLatencyModeDeinit();
+static void wstLowLatencyModePushFrame(GstWesterosSink *sink, GstBuffer *buffer);
+static void wstLowLatencyModeSetVideoRect(GstWesterosSink *sink);
+static int getDisplayWidth();
 
 #ifdef USE_AMLOGIC_MESON
 #include "meson_drm.h"
@@ -771,6 +800,11 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
         (GParamFlags)(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
 #endif
 
+   g_object_class_install_property (gobject_class, PROP_LOW_LATENCY_MODE,
+     g_param_spec_boolean ("low-latency-mode",
+                           "video low latency mode",
+                           "Low latency video playback. Only support H.264 and AV1. 0: disable; 1: enable", FALSE, G_PARAM_READWRITE));
+
    g_signals[SIGNAL_FIRSTFRAME]= g_signal_new( "first-video-frame-callback",
                                                G_TYPE_FROM_CLASS(GST_ELEMENT_CLASS(klass)),
                                                (GSignalFlags) (G_SIGNAL_RUN_LAST),
@@ -857,6 +891,42 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
          klass->canUseResMgr= 1;
       }
    }
+}
+
+/**
+ * Load symbol from libvcodec.so
+ *
+ * @return Resource handle holds loaded shared library
+ * @return NULL if resource acquisition failed
+ */
+static struct vcodec *vcodecInit()
+{
+	struct vcodec *vcodec = (struct vcodec *)calloc(1, sizeof(vcodec[0]));
+
+	if(!(vcodec->handle = dlopen("libvcodec.so", RTLD_NOW | RTLD_GLOBAL)))
+	{
+		GST_INFO("libvcodec not found");
+		goto cleanup;
+	}
+
+	if(!(vcodec->vcodec_ext_init = (void * (*)(enum vcodec_format, const char *))dlsym(vcodec->handle, "vcodec_ext_init")))
+		goto cleanup;
+	if(!(vcodec->vcodec_ext_init_ll_avc = (void * (*)())dlsym(vcodec->handle, "vcodec_ext_init_ll_avc")))
+		goto cleanup;
+	if(!(vcodec->vcodec_ext_init_ll_av1 = (void * (*)())dlsym(vcodec->handle, "vcodec_ext_init_ll_av1")))
+		goto cleanup;
+	if(!(vcodec->vcodec_ext_destroy = (void (*)(void *))dlsym(vcodec->handle, "vcodec_ext_destroy")))
+		goto cleanup;
+	if(!(vcodec->vcodec_ext_write = (int (*)(void *, void *, int))dlsym(vcodec->handle, "vcodec_ext_write")))
+		goto cleanup;
+
+	return vcodec;
+
+cleanup:
+	if(vcodec->handle)
+		dlclose(vcodec->handle);
+	free(vcodec);
+	return NULL;
 }
 
 gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
@@ -1039,6 +1109,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
    sink->useSegmentPosition= TRUE;
 
+   sink->soc.lowLatencyMode = FALSE;
+
    #ifdef USE_GST1
    sink->soc.chainOrg= 0;
    if ( GST_BASE_SINK(sink)->sinkpad )
@@ -1103,6 +1175,9 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    #ifdef USE_GENERIC_AVSYNC
    wstPruneAVSyncFiles( sink );
    #endif
+
+   if(g_vcodec == NULL)
+      g_vcodec = vcodecInit();
 
    result= TRUE;
 
@@ -1313,6 +1388,12 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             GST_DEBUG("set keepLastFrame %d", sink->soc.keepLastFrame);
             break;
          }
+      case PROP_LOW_LATENCY_MODE:
+         {
+            sink->soc.lowLatencyMode = g_value_get_boolean(value);
+            GST_DEBUG("set lowLatencyMode %d", sink->soc.lowLatencyMode);
+            break;
+         }
       default:
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
          break;
@@ -1409,6 +1490,9 @@ void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *
             g_value_take_boxed( value, wstSinkGetStats(sink) );
             UNLOCK(sink);
          }
+         break;
+      case PROP_LOW_LATENCY_MODE:
+         g_value_set_boolean(value, sink->soc.lowLatencyMode);
          break;
       default:
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -2139,6 +2223,24 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
          UNLOCK(sink);
       }
 
+      /* bypass the v4l2 path (StoD) */
+      if ( sink->soc.lowLatencyMode && g_vcodec )
+      {
+         wstLowLatencyModePushFrame(sink, buffer);
+         ++sink->soc.frameInCount;
+         sink->soc.lastBuffer= buffer;
+         LOCK(sink);
+         if ( !sink->videoStarted && (!sink->rm || sink->resAssignedId >= 0) )
+         {
+            if ( !gst_westeros_sink_soc_start_video( sink ) )
+            {
+               GST_ERROR("gst_westeros_sink_soc_render: gst_westeros_sink_soc_start_video failed");
+            }
+         }
+         UNLOCK(sink);
+         goto exit;
+      }
+
       #ifdef USE_GST_ALLOCATORS
       if ( sink->soc.inputMemMode == V4L2_MEMORY_DMABUF )
       {
@@ -2613,7 +2715,10 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
    sink->soc.pixelAspectRatioChanged= TRUE;
    if ( needUpdate )
    {
-      wstSendRectVideoClientConnection(sink->soc.conn);
+      if(sink->soc.lowLatencyMode && g_vcodec)
+        wstLowLatencyModeSetVideoRect(sink);
+      else
+        wstSendRectVideoClientConnection(sink->soc.conn);
    }
 }
 
@@ -6575,6 +6680,179 @@ static void wstCheckAndCompleteAsyncStateChangeToPaused(GstBaseSink * bs)
    GST_BASE_SINK_PREROLL_UNLOCK(bs);
 }
 
+/**
+ * Get the panel width from sysfs
+ *
+ * This API is intended to be used during low latency mode (non-v4l) because the video scale and
+ * position is not controlled by libdrm now. The actual witdh-height is only known in westeros-gl
+ *
+ * @return Panel witdh
+ */
+static int getDisplayWidth()
+{
+	const int UHD_WIDTH = 3840;
+	int width = UHD_WIDTH;
+	FILE *fp = fopen(SYSFS_DISPLAY_VINFO, "r");
+
+	if(fp == NULL)
+	{
+		GST_ERROR("Failed to open %s, errno: %d. Assume UHD width %d", SYSFS_VIDEO_AXIS, errno, UHD_WIDTH);
+		return UHD_WIDTH;
+	}
+
+	char line[1024] = {0};
+	char *key, *value, *saveptr;
+	while(fgets(line, sizeof(line), fp))
+	{
+		key = strtok_r(line, " \n", &saveptr);
+		value = strtok_r(NULL, " \n", &saveptr);
+		if(!key || !value)
+			continue;
+
+		if(!strcmp(key, "width:"))
+		{
+			width = atoi(value);
+			if(width <= 0)
+			{
+				GST_ERROR("Failed to get the width in %s. Assume UHD width %d", SYSFS_VIDEO_AXIS, errno, UHD_WIDTH);
+				width = UHD_WIDTH;
+			}
+			break;
+		}
+	}
+	fclose(fp);
+	return width;
+}
+
+/**
+ * Set the output video frame position in low latency mode
+ *
+ * During low latency mode, the video position is not controlled by libdrm anymore, so
+ * an alternate approach is requried
+ *
+ * @param sink Current context of GstWesterosSink
+ */
+static void wstLowLatencyModeSetVideoRect(GstWesterosSink *sink)
+{
+	if(!needBounds(sink))
+		return ;
+
+	FILE *fp = fopen(SYSFS_VIDEO_AXIS, "w");
+	if(!fp)
+	{
+		GST_ERROR("Failed to open %s, ret: %d", SYSFS_VIDEO_AXIS, errno);
+		return;
+	}
+
+	int vx, vy, vw, vh;
+	wstGetVideoBounds(sink, &vx, &vy, &vw, &vh, true);
+
+	const double multi = (double)getDisplayWidth() / sink->windowWidth;
+	const int top_left_x = (int)(vx * multi);
+	const int top_left_y = (int)(vy * multi);
+	const int bottom_right_x = (int)((vx + vw) * multi);
+	const int bottom_right_y = (int)((vy + vh) * multi);
+
+	GST_DEBUG("Update video position (%d, %d, %d, %d)", top_left_x, top_left_y, bottom_right_x, bottom_right_y);
+
+	fprintf(fp, "%d %d %d %d", top_left_x, top_left_y, bottom_right_x, bottom_right_y);
+	fclose(fp);
+}
+
+/**
+ * Is low latency mode being initialized
+ *
+ * @return Return true if low latency mdoe is initialized, else return false
+ */
+static bool wstLowLatencyModeIsInit()
+{
+	return g_vcodec && g_vcodec->ext_handle;
+}
+
+/**
+ * Initialized low latency mode related resource
+ *
+ * Callers must call `wstLowLatencyModeDeinit()` to release the resource
+ *
+ * @param sink Current context of GstWesterosSink
+ * @return Return true if resource is initialized successfully, else return false
+ */
+static bool wstLowLatencyModeInit(GstWesterosSink *sink)
+{
+	bool ret = false;
+	int inputFormat = sink->soc.inputFormat;
+	switch (inputFormat)
+	{
+		case V4L2_PIX_FMT_AV1:
+			GST_DEBUG("Initializing AV1 vcodec");
+			g_vcodec->ext_handle = g_vcodec->vcodec_ext_init_ll_av1();
+			ret = true;
+			break;
+		case V4L2_PIX_FMT_H264:
+		case V4L2_PIX_FMT_H264_NO_SC:
+		case V4L2_PIX_FMT_H264_MVC:
+			GST_DEBUG("Initializing AVC vcodec");
+			g_vcodec->ext_handle = g_vcodec->vcodec_ext_init_ll_avc();
+			ret = true;
+			break;
+		default:
+			GST_ERROR("Unsupported video format: %d", inputFormat);
+			ret = false;
+			break;
+	}
+	return ret;
+}
+
+/**
+ * Release low latency mode related resource allocated by `wstLowLatencyModeInit()`
+ */
+static void wstLowLatencyModeDeinit()
+{
+	g_vcodec->vcodec_ext_destroy(g_vcodec->ext_handle);
+	g_vcodec->ext_handle = NULL;
+}
+
+/**
+ * Display video frame in low latency mode
+ *
+ * It is not necessary to call `wstLowLatencyModeInit()` prior this call
+ *
+ * @param sink Current context of GstWesterosSink
+ * @param buffer GStreamer buffer to be decoded
+ */
+static void wstLowLatencyModePushFrame(GstWesterosSink *sink, GstBuffer *buffer)
+{
+	if(g_vcodec->ext_handle == NULL)
+		if(wstLowLatencyModeInit(sink) == false)
+			return;
+
+	void *data = NULL;
+	int data_len = 0;
+#ifdef USE_GST1
+	GstMapInfo map;
+	gst_buffer_map(buffer, &map, (GstMapFlags)GST_MAP_READ);
+	data = map.data;
+	data_len = map.size;
+#else
+	data = GST_BUFFER_DATA(buffer);
+	data_len = (int)GST_BUFFER_SIZE(buffer);
+#endif
+
+	g_vcodec->vcodec_ext_write(g_vcodec->ext_handle, data, data_len);
+	avProgLog(GST_BUFFER_PTS(buffer), sink->resAssignedId, "StoD", wstInFullness(sink));
+
+#ifdef USE_GST1
+    gst_buffer_unmap( buffer, &map);
+#endif
+
+	LOCK(sink);
+	if(sink->soc.frameOutCount == 0)
+		sink->soc.emitFirstFrameSignal= TRUE;
+	++sink->soc.frameDecodeCount;
+	++sink->soc.frameOutCount;
+	UNLOCK(sink);
+}
+
 static gpointer wstVideoOutputThread(gpointer data)
 {
    GstWesterosSink *sink= (GstWesterosSink*)data;
@@ -7138,6 +7416,9 @@ exit:
    LOCK(sink);
    wstSendFlushVideoClientConnection( sink->soc.conn );
    UNLOCK(sink);
+
+   if ( wstLowLatencyModeIsInit() )
+      wstLowLatencyModeDeinit();
 
    GST_DEBUG("wstVideoOutputThread: exit");
 
