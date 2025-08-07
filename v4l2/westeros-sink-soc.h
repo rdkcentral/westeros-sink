@@ -182,6 +182,7 @@ struct _GstWesterosSinkSoc
    gboolean showChanged;
    gboolean zoomModeGlobal;
    gboolean useImmediateOutput;
+   gboolean lowLatencyMode;
    gboolean keepLastFrame;
    gboolean keepLastFrameChanged;
    gboolean isSourceDTV;
