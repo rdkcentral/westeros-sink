@@ -974,7 +974,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.frameHeightStream= -1;
    sink->soc.frameInCount= 0;
    sink->soc.frameOutCount= 0;
-   sink->soc.videoStartTime= 0;
+   sink->soc.videoDecodeStartTime= 0;
    sink->soc.frameDecodeCount= 0;
    sink->soc.frameDisplayCount= 0;
    sink->soc.expectNoLastFrame= FALSE;
@@ -2489,7 +2489,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.frameDisplayCount= 0;
    sink->soc.decoderLastFrame= 0;
    sink->soc.decoderEOS= 0;
-   sink->soc.videoStartTime= 0;
+   sink->soc.videoDecodeStartTime= 0;
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    sink->soc.startedOutOfSegment= FALSE;
@@ -2506,8 +2506,6 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
 {
    gboolean result= FALSE;
    int rc;
-
-   sink->soc.videoStartTime= g_get_monotonic_time();
 
    sink->soc.frameOutCount= 0;
    sink->soc.frameDecodeCount= 0;
@@ -6914,6 +6912,9 @@ capture_start:
          goto exit;
       }
 
+      /* Renamed sink->soc.videoStartTime to sink->soc.videoDecodeStartTime and moved from gst_westeros_sink_soc_render to wstVideoOutputThread.
+         Decode time measurement should be ideally started when output thread issue VIDIOC_STREAMON for V4L Capture */
+      sink->soc.videoDecodeStartTime= g_get_monotonic_time();
       sink->soc.decoderLastFrame= 0;
 
       bufferType= sink->soc.isMultiPlane ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE :V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -7183,7 +7184,8 @@ capture_start:
                   gint64 now= g_get_monotonic_time();
                   float frameRate= (sink->soc.frameRate != 0.0 ? sink->soc.frameRate : 30.0);
                   float frameDelay= sink->soc.frameInCount / frameRate;
-                  if ( (frameDelay > 1.0) && (now-sink->soc.videoStartTime > 3000000LL) )
+                  GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
+                  if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
                      sink->soc.decodeError= TRUE;
                      postDecodeError( sink, "no output from decoder" );
