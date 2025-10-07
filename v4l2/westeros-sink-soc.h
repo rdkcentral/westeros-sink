@@ -207,7 +207,7 @@ struct _GstWesterosSinkSoc
    gboolean interlaced;
    gint64 prevDecodedTimestamp;
    gint64 currentInputPTS;
-   gint64 videoStartTime;
+   gint64 videoDecodeStartTime;
 
    char *devname;
    gboolean enableTextureSignal;
