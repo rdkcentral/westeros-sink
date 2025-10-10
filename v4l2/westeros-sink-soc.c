@@ -2730,44 +2730,54 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
 
 static void wstSinkSocStopVideo( GstWesterosSink *sink )
 {
+   if ( sink->soc.videoOutputThread )
+   {
+      sink->soc.quitVideoOutputThread= TRUE;
+      g_thread_join( sink->soc.videoOutputThread );
+      sink->soc.videoOutputThread= NULL;
+   }
+
+   if ( sink->soc.eosDetectionThread )
+   {
+      sink->soc.quitEOSDetectionThread= TRUE;
+      g_thread_join( sink->soc.eosDetectionThread );
+      sink->soc.eosDetectionThread= NULL;
+   }
+
    LOCK(sink);
    if ( sink->soc.conn )
    {
       wstDestroyVideoClientConnection( sink->soc.conn );
       sink->soc.conn= 0;
    }
-   if ( sink->soc.videoOutputThread || sink->soc.eosDetectionThread || sink->soc.dispatchThread )
+
+   if ( sink->soc.dispatchThread )
    {
-      sink->soc.quitVideoOutputThread= TRUE;
-      sink->soc.quitEOSDetectionThread= TRUE;
       if ( !sink->soc.keepLastFrame )
-      {
-         sink->soc.quitDispatchThread= TRUE;
-         if ( sink->display )
-         {
-            int fd= wl_display_get_fd( sink->display );
-            if ( fd >= 0 )
-            {
-               shutdown( fd, SHUT_RDWR );
-            }
-         }
+      { 
+        sink->soc.quitDispatchThread= TRUE;
+        if ( sink->display )
+        {
+           int fd= wl_display_get_fd( sink->display );
+           if ( fd >= 0 )
+           {
+            shutdown( fd, SHUT_RDWR );
+           }
+        }
+        UNLOCK(sink);
+        g_thread_join( sink->soc.dispatchThread );
+        LOCK(sink);
+        sink->soc.dispatchThread= NULL;
 
-         if ( sink->soc.dispatchThread )
-         {
-            sink->soc.quitDispatchThread= TRUE;
-            UNLOCK(sink);
-            g_thread_join( sink->soc.dispatchThread );
-            LOCK(sink);
-            sink->soc.dispatchThread= NULL;
-         }
       }
+   wstStopEvents( sink );
 
-      wstStopEvents( sink );
+   wstTearDownInputBuffers( sink );
 
-      wstTearDownInputBuffers( sink );
+   wstTearDownOutputBuffers( sink );
 
-      wstTearDownOutputBuffers( sink );
    }
+
    if ( sink->soc.v4l2Fd >= 0 )
    {
       int fdToClose= sink->soc.v4l2Fd;
@@ -2823,20 +2833,6 @@ static void wstSinkSocStopVideo( GstWesterosSink *sink )
 
    sink->videoStarted= FALSE;
    UNLOCK(sink);
-
-   if ( sink->soc.videoOutputThread )
-   {
-      sink->soc.quitVideoOutputThread= TRUE;
-      g_thread_join( sink->soc.videoOutputThread );
-      sink->soc.videoOutputThread= NULL;
-   }
-
-   if ( sink->soc.eosDetectionThread )
-   {
-      sink->soc.quitEOSDetectionThread= TRUE;
-      g_thread_join( sink->soc.eosDetectionThread );
-      sink->soc.eosDetectionThread= NULL;
-   }
 
    #ifdef USE_GENERIC_AVSYNC
    if ( sink->soc.avsctx )
