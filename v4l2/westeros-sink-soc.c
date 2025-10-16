@@ -6004,7 +6004,7 @@ static bool wstLocalRateControl( GstWesterosSink *sink, int buffIndex )
       frameDuration= 1000000LL/sink->soc.frameRate;
    }
 
-   if ( framePTS+frameDuration < sink->segment.start/1000LL )
+   if ( framePTS+frameDuration <= sink->segment.start/1000LL )
    {
       FRAME("out:       drop out-of-segment frame");
       drop= true;
