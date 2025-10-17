@@ -38,7 +38,7 @@
 #include "bmedia_types.h"
 
 #define FRAME_POLL_TIME (8000)
-#define EOS_DETECT_DELAY (500000)
+#define EOS_DETECT_DELAY (1500000)
 #define DEFAULT_CAPTURE_WIDTH (1280)
 #define DEFAULT_CAPTURE_HEIGHT (720)
 #define MAX_PIP_WIDTH (640)
