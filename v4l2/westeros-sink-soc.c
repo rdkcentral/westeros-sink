@@ -6777,11 +6777,13 @@ static bool wstLowLatencyModeInit(GstWesterosSink *sink)
 	int inputFormat = sink->soc.inputFormat;
 	switch (inputFormat)
 	{
+		#ifdef V4L2_PIX_FMT_AV1
 		case V4L2_PIX_FMT_AV1:
 			GST_DEBUG("Initializing AV1 vcodec");
 			g_vcodec->ext_handle = g_vcodec->vcodec_ext_init_ll_av1();
 			ret = true;
 			break;
+		#endif
 		case V4L2_PIX_FMT_H264:
 		case V4L2_PIX_FMT_H264_NO_SC:
 		case V4L2_PIX_FMT_H264_MVC:
