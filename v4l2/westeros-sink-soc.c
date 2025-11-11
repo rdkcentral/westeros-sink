@@ -5504,6 +5504,21 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                            if ( frameTime != -1LL )
                            {
                               gint64 currentNano= frameTime*1000LL;
+
+                              /*
+                               * Prevent stale frameTime from corrupting position during seeks.
+                               * During seek operations, old frameTime messages can arrive after
+                               * the segment boundary has been updated, causing position corruption.
+                               * Filter out frameTime values that predate the current segment start.
+                               */
+                              if ( frameTime < sink->segment.start/1000LL )
+                              {
+                                 GST_DEBUG("Dropping stale frameTime: %lld μs before segment start: %lld μs", frameTime, sink->segment.start/1000LL);
+                                 FRAME("out:       drop stale frameTime %lld before segment start", frameTime);
+                                 break;  /* Early exit - no position calculation for stale frameTime */
+                              }
+
+                              /* Position calculation for valid (non-stale) frameTime only */
                               gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
                               sink->position= sink->positionSegmentStart + currentNano - firstNano;
                               sink->currentPTS = nanoTimeToPTS(currentNano);
