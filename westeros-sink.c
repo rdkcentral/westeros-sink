@@ -918,9 +918,8 @@ static bool timeCodeFound(guint64 position, WstSinkTimeCode timeCode, double fra
    }
 
    // Does the position match the time code within the fuzz factor
-   bFound = (timeCode.position == position ||
-             timeCode.position >= position - fuzz ||
-             timeCode.position < position + fuzz);
+   bFound = ((timeCode.position >= position - fuzz) &&
+             (timeCode.position <= position + fuzz));
 
    return bFound;
 }
