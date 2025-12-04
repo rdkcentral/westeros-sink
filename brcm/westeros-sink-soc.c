@@ -3493,6 +3493,14 @@ static long long getCurrentTimeMillis(void)
    return utcCurrentTimeMillis;
 }
 
+static gboolean audioIsPassThrough(void)
+{
+   NxClient_AudioSettings audioSettings;
+   NxClient_GetAudioSettings(&audioSettings);
+   GST_DEBUG("audioIsPassThrough: %d", audioSettings.hdmi.outputMode == NxClient_AudioOutputMode_ePassthrough);
+   return audioSettings.hdmi.outputMode == NxClient_AudioOutputMode_ePassthrough;
+}
+
 static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed, gboolean playing )
 {
    NEXUS_VideoDecoderTrickState trickState;
@@ -3522,6 +3530,16 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
       GST_WARNING_OBJECT(sink, "Ignoring negative play speed");
       return;
    }
+
+#if RATECONTROL_SUPPPORTED
+   /* could put limit in instant-rate-change event, but playrate could be set from NEW_SEGMENT as well */
+   /* so check here to protect both */
+   if ( audioIsPassThrough() && clientPlaySpeed != 1.0 && clientPlaySpeed >= MIN_PLAYBACK_RATE_WITH_AUDIO && clientPlaySpeed <= MAX_PLAYBACK_RATE_WITH_AUDIO)
+   {
+      GST_INFO("audioIsPassThrough, ignoring clientPlaySpeed %.02f, forcing to 1.00", clientPlaySpeed);
+      clientPlaySpeed = 1.0;
+   }
+#endif
 
    if ( (sink->soc.clientPlaySpeed == clientPlaySpeed) && (sink->soc.clientPlaying == playing) )
    {
