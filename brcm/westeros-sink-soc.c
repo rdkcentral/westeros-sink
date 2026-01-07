@@ -78,7 +78,14 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
    if (sink->soc.videoDecoder) \
    {   \
    NEXUS_VideoDecoderStatus videoStatus;  \
-   NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus ); \
+   NEXUS_Error log_rc = NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus ); \
+   if (log_rc != NEXUS_SUCCESS) { \
+      videoStatus.pts = 0; \
+      videoStatus.numDecoded = 0; \
+      videoStatus.numDisplayed = 0; \
+      videoStatus.queueDepth = 0; \
+      videoStatus.numDecodeErrors = 0; \
+   } \
    guint stc=0; \
    if (sink->soc.stcChannel) { \
       NEXUS_SimpleStcChannel_GetStc(sink->soc.stcChannel, &stc); \
@@ -1438,7 +1445,9 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
 {
    WESTEROS_UNUSED(passToDefault);
    GST_DEBUG("sink_soc_paused_to_playing");
-   queryPeerHandles(sink);	
+   if (!queryPeerHandles(sink)) {
+      GST_WARNING_OBJECT(sink, "queryPeerHandles failed in paused_to_playing");
+   }
 
    LOCK(sink);
    sink->soc.videoPlaying = TRUE;
@@ -2759,6 +2768,14 @@ static void processTextureWayland( GstWesterosSink *sink, NEXUS_SurfaceHandle su
       wl_surface_damage( sink->surface, 0, 0, sink->windowWidth, sink->windowHeight );
       wl_surface_commit( sink->surface );
       ++sink->soc.activeBuffers;
+   }
+   else
+   {
+      if ( binfo )
+      {
+         free( binfo );
+         binfo= NULL;
+      }
    }
 }
 
