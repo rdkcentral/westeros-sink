@@ -28,7 +28,7 @@
 #include "westeros-version.h"
 
 #ifdef ENABLE_SW_DECODE
-#include "../../westeros-sink/westeros-sink-sw.c"
+#include "../westeros-sink-sw.c"
 #endif
 
 #ifdef USE_GST_VIDEO

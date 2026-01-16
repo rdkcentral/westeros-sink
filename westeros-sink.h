@@ -70,7 +70,7 @@ typedef void (*SinkReleaseResources)( GstWesterosSink *sink );
 typedef void (*StatsLogUpdate)( GstWesterosSink *sink, int frameRenderCount, int frameDropCount );
 
 #ifdef ENABLE_SW_DECODE
-#include "../../westeros-sink/westeros-sink-sw.h"
+#include "../westeros-sink-sw.h"
 
 typedef bool (*SinkSWInit)( GstWesterosSink *sink );
 typedef void (*SinkSWTerm)( GstWesterosSink *sink );
