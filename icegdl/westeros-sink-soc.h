@@ -106,7 +106,11 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer );
 void gst_westeros_sink_soc_flush( GstWesterosSink *sink );
 gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink );
 void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink );
+#ifdef NATIVE_BUILD
+void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath );
+#else
 void gst_westeros_sink_set_video_path( GstWesterosSink *sink, bool useGfxPath );
+#endif
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink );
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query );
 

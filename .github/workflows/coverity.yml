@@ -1,0 +1,66 @@
+name: Coverity build for westeros-sink
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout westeros-sink repository
+        uses: actions/checkout@v6
+
+      - name: Checkout Westeros main repository
+        uses: actions/checkout@v6
+        with:
+          repository: rdkcentral/westeros
+          path: westeros-cloned
+          token: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout Westeros GL DRM repository
+        uses: actions/checkout@v6
+        with:
+          repository: rdkcentral/westeros-gl-drm
+          path: westeros-gl-drm-cloned
+          token: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
+          fetch-depth: 1
+
+      - name: Make scripts executable
+        run: |
+          chmod +x ./install-dependencies.sh
+          chmod +x ./build.sh
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
+        run: bash ./install-dependencies.sh
+
+      - name: Build westeros-sink variants
+        run: bash ./build.sh
+
+      - name: Verify build artifacts
+        run: |
+          echo "=========================================="
+          echo "Build Artifacts Verification"
+          echo "=========================================="
+          echo ""
+          echo "Libraries (lib/gstreamer-1.0/):"
+          find ./install/lib/gstreamer-1.0/ -name "*.so" -exec ls -lh {} \;
+          echo ""
+          echo "Binaries (bin/):"
+          ls -lh ./install/bin/
+          echo ""
+          echo "Summary:"
+          LIBS=$(find ./install/lib/gstreamer-1.0/ -name "*.so" | wc -l)
+          BINS=$(ls -1 ./install/bin/ | wc -l)
+          echo "✓ Built $LIBS library variants"
+          echo "✓ Built $BINS executables"

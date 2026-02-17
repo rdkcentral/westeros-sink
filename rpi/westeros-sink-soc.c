@@ -77,11 +77,12 @@ static void drawImage( GstWesterosSink *sink );
 static void processFrame( GstWesterosSink *sink, GstBuffer *buffer );
 static gpointer captureThread(gpointer data);
 static gboolean gst_westeros_sink_soc_query_element( GstElement *element, GstQuery *query );
-
+#ifndef NATIVE_BUILD
 extern "C"
 {
 struct wl_display *khrn_platform_get_wl_display();
 }
+#endif
 
 static gboolean (*queryOrg)(GstElement *element, GstQuery *query)= 0;
 
