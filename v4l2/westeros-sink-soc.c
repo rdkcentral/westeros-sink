@@ -5513,9 +5513,21 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                                */
                               if ( frameTime < sink->segment.start/1000LL )
                               {
-                                 GST_DEBUG("Dropping stale frameTime: %lld μs before segment start: %lld μs", frameTime, sink->segment.start/1000LL);
-                                 FRAME("out:       drop stale frameTime %lld before segment start", frameTime);
-                                 break;  /* Early exit - no position calculation for stale frameTime */
+                                 /* 
+                                  * Frame time is stale. Do not use this to calculate position. Any new segment will have already initialized the position value
+                                  * to segment start anyway. Skip time code handling as well, as it's directly linked to the PTS. 
+                                  * Continue to update frameDisplayCount and first frame signal as usual
+                                  */
+                                 GST_DEBUG("Stale frameTime: %lld μs before segment start: %lld μs. Skip position update.", frameTime, sink->segment.start/1000LL);
+                                 if (sink->soc.frameOutCount > 0 ) // Note: same pattern of condition checks as the happy-path a few code blocks below.
+                                 {
+                                    if (sink->soc.frameDisplayCount == 0)
+                                    {
+                                       sink->soc.emitFirstFrameSignal= TRUE;
+                                    }
+                                    ++sink->soc.frameDisplayCount;
+                                 }
+                                 break;  /* Early exit - no position calculation for stale frameTime.  */
                               }
 
                               /* Position calculation for valid (non-stale) frameTime only */
