@@ -78,7 +78,9 @@ static bool initSWDecoder( GstWesterosSink *sink )
    swCtx->prevFrameTime= -1LL;
    swCtx->frameRate= 60.0;
 
+   #ifndef NATIVE_BUILD
    avcodec_register_all();
+   #endif
    swCtx->codec= avcodec_find_decoder(AV_CODEC_ID_H264);
    if ( !swCtx->codec )
    {

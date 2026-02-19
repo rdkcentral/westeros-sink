@@ -41,7 +41,9 @@
 #ifdef USE_GST_AFD
 #include "gst/video/video-anc.h"
 #ifndef gst_buffer_get_video_afd_meta
+#ifndef NATIVE_BUILD
 #undef USE_GST_AFD
+#endif
 #endif
 #endif
 
@@ -50,6 +52,9 @@
 #endif
 
 #include "westeros-sink.h"
+#ifdef NATIVE_BUILD
+#include "gst_video_afd.h"
+#endif
 
 #define DEFAULT_DEVICE_NAME "/dev/video10"
 #define DEFAULT_VIDEO_SERVER "video"
