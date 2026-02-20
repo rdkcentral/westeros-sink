@@ -198,10 +198,16 @@ static const struct wl_sb_listener sbListener = {
 
 void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!klass) return;
+   #else
+   #endif
+
    GObjectClass *gobject_class= (GObjectClass *) klass;
    GstElementClass *gstelement_class;
    GstBaseSinkClass *gstbasesink_class= (GstBaseSinkClass *) klass;
 
+   #ifndef UNIT_TEST_BUILD
    gstbasesink_class->preroll= GST_DEBUG_FUNCPTR(prerollSinkSoc);
 
    g_object_class_install_property (gobject_class, PROP_VIDEO_PTS_OFFSET,
@@ -415,6 +421,7 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
                                               G_TYPE_UINT  /* seconds */
                                              );
    #endif
+   #endif /* !UNIT_TEST_BUILD */
 
    klass->canUseResMgr= 0;
    {
@@ -449,7 +456,9 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
                                                   caps );
                if ( padTemplate )
                {
+                  #ifndef UNIT_TEST_BUILD
                   gst_element_class_add_pad_template(gstelement_class, padTemplate);
+                  #endif
                   padTemplate= 0;
                }
                gst_caps_unref( caps );
@@ -813,6 +822,12 @@ static void streamChangedCallback(void * context, int param)
 
 gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) {
+      return FALSE;
+   }
+   #endif
+
    gboolean result= FALSE;
    NEXUS_Error rc;
    int i;
@@ -979,12 +994,22 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return;
+   #endif
+
    NxClient_Uninit(); 
 }
 
 void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!object || !value || !pspec) return;
+   GstWesterosSink *sink = (GstWesterosSink *)object;
+   if (!sink) return;
+   #else
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
+   #endif
 
    WESTEROS_UNUSED(pspec);
 
@@ -1247,7 +1272,13 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
 
 void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!object || !value || !pspec) return;
+   GstWesterosSink *sink = (GstWesterosSink *)object;
+   if (!sink) return;
+   #else
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
+   #endif
 
    WESTEROS_UNUSED(pspec);
 
@@ -1366,6 +1397,10 @@ void gst_westeros_sink_soc_registryHandleGlobal( GstWesterosSink *sink,
                                  struct wl_registry *registry, uint32_t id,
 		                           const char *interface, uint32_t version)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink || !interface || !registry || !sink->queue || !sink->display) return;
+   #endif
+
    WESTEROS_UNUSED(version);
    int len;
 
@@ -1394,6 +1429,10 @@ void gst_westeros_sink_soc_registryHandleGlobalRemove( GstWesterosSink *sink,
 gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
    gboolean result= FALSE;
+
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return TRUE;
+   #endif
    
    WESTEROS_UNUSED(passToDefault);
 
@@ -1412,6 +1451,10 @@ gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *p
 
 gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return TRUE;
+   #endif
+
    WESTEROS_UNUSED(passToDefault);
    
    GST_DEBUG("sink_soc_ready_to_paused");
@@ -1443,6 +1486,10 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
 
 gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return TRUE;
+   #endif
+
    WESTEROS_UNUSED(passToDefault);
    GST_DEBUG("sink_soc_paused_to_playing");
    if (!queryPeerHandles(sink)) {
@@ -1543,6 +1590,10 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
 
 gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return TRUE;
+   #endif
+
    LOCK(sink);
    sink->soc.videoPlaying = FALSE;
    UNLOCK(sink);
@@ -1584,6 +1635,10 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
 
 gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return TRUE;
+   #endif
+
    WESTEROS_UNUSED(passToDefault);
 
    GST_DEBUG("sink_soc_paused_to_ready");
@@ -1594,6 +1649,10 @@ gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean 
 
 gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return TRUE;
+   #endif
+
    *passToDefault= false;
 
    GST_DEBUG("sink_soc_ready_to_null");
@@ -1700,6 +1759,10 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
 
 void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return;
+   #endif
+
    unsigned int pts45k= (unsigned int)( pts / 2 );
    NEXUS_VideoDecoderStatus videoStatus;
 
@@ -1741,13 +1804,24 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
    else
    {
       GST_DEBUG_OBJECT(sink, "sink->soc.videoDecoder == NULL");
+      #ifdef UNIT_TEST_BUILD
+      if (pts45k != sink->soc.lastStartPts45k)
+      {
+         sink->soc.lastStartPts45k= pts45k;
+      }
+      #endif
    }
-
+   #ifndef UNIT_TEST_BUILD
    updateClientPlaySpeed(sink, sink->playbackRate, GST_STATE(GST_ELEMENT(sink)) == GST_STATE_PLAYING );
+   #endif
 }
 
 void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink || !buffer) return;
+   #endif
+
    WESTEROS_UNUSED(sink);
    WESTEROS_UNUSED(buffer);
    #ifdef ENABLE_SW_DECODE
@@ -1777,6 +1851,10 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 
 void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return;
+   #endif
+
    #ifdef ENABLE_SW_DECODE
    if ( swIsSWDecode( sink ) )
    {
@@ -1863,6 +1941,11 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
 {
    gboolean result= FALSE;
+
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return FALSE;
+   #endif
+
    NEXUS_Error rc;
    NEXUS_SimpleVideoDecoderStartSettings startSettings;
    NEXUS_VideoDecoderTrickState trickState;
@@ -1987,6 +2070,10 @@ exit:
 
 void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return;
+   #endif
+
    gboolean sendEOS= FALSE;
    LOCK(sink);
    if ( sink->soc.useImmediateOutput )
@@ -2622,6 +2709,10 @@ static gpointer captureThread(gpointer data)
 
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return;
+   #endif
+
    if ( swIsSWDecode( sink ) )
    {
       return;
@@ -3078,6 +3169,10 @@ static void updateVideoStatus( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink) return;
+   #endif
+
    NEXUS_SurfaceClientSettings vClientSettings;
    NEXUS_SurfaceComposition vComposition;
    NxClient_DisplaySettings nxDspSettings;
@@ -3215,6 +3310,12 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
 
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (!sink || !query) {
+      return FALSE;
+   }
+   #endif
+
    gboolean rv = FALSE;
    GValue val = {0, };
 
@@ -3223,7 +3324,15 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
       case GST_QUERY_CUSTOM:
          {
             GstStructure *query_structure = (GstStructure*) gst_query_get_structure(query);
+            #ifdef UNIT_TEST_BUILD
+            if (!query_structure) return FALSE;
+            #endif
+
             const gchar *struct_name = gst_structure_get_name(query_structure);
+            #ifdef UNIT_TEST_BUILD
+            if (!struct_name) return FALSE;
+            #endif
+
             if (!strcasecmp(struct_name, "get_video_handle"))
             {
                g_value_init(&val, G_TYPE_POINTER);

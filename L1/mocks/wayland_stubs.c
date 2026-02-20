@@ -18,9 +18,7 @@
 extern "C" {
 #endif
 
-// Mock wl_proxy_add_listener to prevent segfaults in unit tests
 int wl_proxy_add_listener(struct wl_proxy* proxy, void (**listener)(void), void* data) {
-    // Mock: do nothing, return 0 (success)
     return 0;
 }
 
@@ -31,9 +29,7 @@ int wl_proxy_add_listener(struct wl_proxy* proxy, void (**listener)(void), void*
 extern "C" {
 #endif
 
-// Mock wl_proxy_set_queue to prevent segfaults in unit tests
 void wl_proxy_set_queue(struct wl_proxy* proxy, struct wl_event_queue* queue) {
-    // Mock: do nothing
 }
 
 #ifdef __cplusplus
@@ -47,27 +43,58 @@ void wl_proxy_set_queue(struct wl_proxy* proxy, struct wl_event_queue* queue) {
 extern "C" {
 #endif
 
-// Mock wl_proxy_marshal_constructor_versioned to prevent segfaults in unit tests
 void* wl_proxy_marshal_constructor_versioned(struct wl_proxy* proxy, uint32_t opcode, const struct wl_interface* interface, uint32_t version, ...) {
-    // Mock: return NULL to indicate failure in test
     return NULL;
 }
 
 #ifdef __cplusplus
 }
 #endif
-// Mock wl_proxy_destroy to prevent SIGABRT in unit tests
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 void wl_proxy_destroy(struct wl_proxy* proxy) {
-    // Mock: do nothing
 }
 
 #ifdef __cplusplus
 }
 #endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void wl_simple_shell_set_visible(struct wl_simple_shell* shell, uint32_t surface_id, int32_t visible) {
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void wl_simple_shell_set_geometry(struct wl_simple_shell* shell, uint32_t surface_id, int32_t x, int32_t y, int32_t width, int32_t height) {
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int wl_display_flush(struct wl_display* display) {
+    return 0;
+}
+
+#ifdef __cplusplus
+}
+#endif
+
 struct wl_interface {
     const char *name;
     int version;
@@ -86,7 +113,6 @@ const struct wl_interface wl_sb_interface = {
     .events = 0,
 };
 
-// Mock wl_simple_shell_interface
 const struct wl_interface wl_simple_shell_interface = {
     .name = "wl_simple_shell",
     .version = 1,
@@ -96,7 +122,6 @@ const struct wl_interface wl_simple_shell_interface = {
     .events = 0,
 };
 
-// Mock wl_vpc_interface
 const struct wl_interface wl_vpc_interface = {
     .name = "wl_vpc",
     .version = 1,
@@ -106,7 +131,6 @@ const struct wl_interface wl_vpc_interface = {
     .events = 0,
 };
 
-// Mock wl_vpc_surface_interface
 const struct wl_interface wl_vpc_surface_interface = {
     .name = "wl_vpc_surface",
     .version = 1,

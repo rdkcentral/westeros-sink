@@ -704,6 +704,13 @@ static GstFlowReturn wstChain(GstPad *pad, GstObject *parent, GstBuffer *buf)
 
 void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (klass == NULL)
+   {
+      return;
+   }
+   #endif
+
    GObjectClass *gobject_class= (GObjectClass *) klass;
    GstBaseSinkClass *gstbasesink_class= (GstBaseSinkClass *) klass;
 
@@ -936,6 +943,13 @@ cleanup:
 
 gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return FALSE;
+   }
+   #endif
+
    gboolean result= FALSE;
    const char *env;
 
@@ -1191,6 +1205,13 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return;
+   }
+   #endif
+
    if ( sink->soc.devname )
    {
       free( sink->soc.devname );
@@ -1212,9 +1233,22 @@ void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (object == NULL || value == NULL)
+   {
+      return;
+   }
+   #endif
+
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
 
    WESTEROS_UNUSED(pspec);
+   #ifdef UNIT_TEST_BUILD
+   if (!pspec || !pspec->name)
+   {
+      return;
+   }
+   #endif
 
    switch (prop_id)
    {
@@ -1407,9 +1441,23 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
 
 void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (object == NULL || value == NULL)
+   {
+      return;
+   }
+   #endif
+
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
 
    WESTEROS_UNUSED(pspec);
+
+   #ifdef UNIT_TEST_BUILD
+   if (!pspec || !pspec->name)
+   {
+      return;
+   }
+   #endif
 
    switch (prop_id)
    {
@@ -1545,6 +1593,14 @@ void gst_westeros_sink_soc_registryHandleGlobalRemove( GstWesterosSink *sink,
 
 gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return TRUE;
+   #endif
+
    gboolean result= FALSE;
 
    WESTEROS_UNUSED(passToDefault);
@@ -1562,6 +1618,14 @@ gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *p
 
 gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return TRUE;
+   #endif
+
    gboolean result= FALSE;
 
    WESTEROS_UNUSED(passToDefault);
@@ -1606,6 +1670,14 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
 
 gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return TRUE;
+   #endif
+
    WESTEROS_UNUSED(passToDefault);
 
    LOCK( sink );
@@ -1624,6 +1696,15 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
 
 gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+  if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   *passToDefault = FALSE;
+   return TRUE;
+   #endif
+
    LOCK( sink );
    sink->soc.videoPlaying= FALSE;
    sink->soc.videoPaused= TRUE;
@@ -1651,6 +1732,15 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
 
 gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   *passToDefault = FALSE;
+   return TRUE;
+   #endif
+
    gboolean keepLastFrame;
 
    /* ensure cleanup happens but preserve
@@ -1684,6 +1774,14 @@ gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean 
 
 gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return TRUE;
+   #endif
+
    WESTEROS_UNUSED(sink);
    gboolean keepLastFrame;
 
@@ -1718,6 +1816,14 @@ gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *p
 
 gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || caps == NULL)
+   {
+      return FALSE;
+   }
+   return FALSE;
+   #endif
+
    bool result= FALSE;
    GstStructure *structure;
    const gchar *mime;
@@ -2112,6 +2218,13 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 
 void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || buffer == NULL)
+   {
+      return;
+   }
+   #endif
+
    #ifdef ENABLE_SW_DECODE
    if ( swIsSWDecode( sink ) )
    {
@@ -2477,6 +2590,13 @@ exit:
 
 void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return;
+   }
+   #endif
+
    GST_DEBUG("gst_westeros_sink_soc_flush");
 
    pthread_mutex_lock(&sink->soc.reset_lock);
@@ -2509,6 +2629,14 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 
 gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return FALSE;
+   }
+   return FALSE;
+   #endif
+
    gboolean result= FALSE;
    int rc;
 
@@ -2562,6 +2690,13 @@ exit:
 
 void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return;
+   }
+   #endif
+
    WESTEROS_UNUSED(sink);
    if ( swIsSWDecode( sink ) )
    {
@@ -2594,6 +2729,13 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return;
+   }
+   #endif
+
    if ( useGfxPath && sink->soc.lowMemoryMode )
    {
       g_print("NOTE: Attempt to use video textures in low memory mode ignored\n");
@@ -2646,6 +2788,13 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
 
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return;
+   }
+   #endif
+
    bool needUpdate= true;
    int vx, vy, vw, vh;
    vx= sink->soc.videoX;
@@ -2727,6 +2876,13 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
 
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
 {
+   #ifdef UNIT_TEST_BUILD
+   if ((sink == NULL) || (query == NULL))
+   {
+      return FALSE;
+   }
+   #endif
+
    WESTEROS_UNUSED(sink);
    WESTEROS_UNUSED(query);
 
@@ -3113,6 +3269,9 @@ static void wstDiscoverVideoDecoder( GstWesterosSinkClass *klass )
 
 static void wstStartEvents( GstWesterosSink *sink )
 {
+#ifdef UNIT_TEST_BUILD
+   return;
+#else
    int rc;
    struct v4l2_event_subscription evtsub;
 
@@ -3139,6 +3298,7 @@ static void wstStartEvents( GstWesterosSink *sink )
    {
       GST_ERROR("wstStartEvents: event subcribe for eos failed rc %d (errno %d)", rc, errno );
    }
+#endif
 }
 
 static void wstStopEvents( GstWesterosSink *sink )
@@ -5921,6 +6081,10 @@ static bool wstWaitForLastFrame( GstWesterosSink *sink )
 
 static void wstDecoderReset( GstWesterosSink *sink, bool hard )
 {
+#ifdef UNIT_TEST_BUILD
+   return;
+#else
+
    long long delay;
 
    sink->soc.quitVideoOutputThread= TRUE;
@@ -5970,6 +6134,7 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
    sink->soc.formatsSet= FALSE;
    sink->soc.codecDataInjected= FALSE;
    UNLOCK(sink);
+#endif
 }
 
 typedef struct bufferInfo

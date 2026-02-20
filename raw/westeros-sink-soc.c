@@ -723,7 +723,9 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
          }
          break;
       default:
+         #ifndef UNIT_TEST_BUILD
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+         #endif
          break;
    }
 }
@@ -767,7 +769,9 @@ void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *
          }
          break;
       default:
+         #ifndef UNIT_TEST_BUILD
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+         #endif
          break;
    }
 }

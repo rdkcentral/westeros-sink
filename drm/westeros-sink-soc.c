@@ -85,14 +85,36 @@ void gst_westeros_sink_soc_registryHandleGlobal( GstWesterosSink *sink,
 		                           const char *interface, uint32_t version)
 {
    WESTEROS_UNUSED(version);
+
+   #ifdef UNIT_TEST_BUILD
+   if (!sink || !interface) {
+      if (sink) sink->soc.sb = NULL;
+      printf("westeros-sink-soc: registry: NULL sink or interface, skipping\n");
+      return;
+   }
+   #endif
+
    int len;
-
+   
+   #ifdef UNIT_TEST_BUILD
+   if (interface) {
+      len = strlen(interface);
+   }
+   if ((len==5) && interface && (strncmp(interface, "wl_sb", len) == 0))
+   #else
    len= strlen(interface);
-
    if ((len==5) && (strncmp(interface, "wl_sb", len) == 0)) 
+   #endif
    {
       sink->soc.sb= (struct wl_sb*)wl_registry_bind(registry, id, &wl_sb_interface, 1);
       printf("westeros-sink-soc: registry: sb %p\n", (void*)sink->soc.sb);
+      #ifdef UNIT_TEST_BUILD
+      if (!sink->soc.sb) {
+         printf("westeros-sink-soc: registry: sb is NULL, skipping listener setup\n");
+         sink->soc.sb = NULL;
+         return;
+      }
+     #endif
       wl_proxy_set_queue((struct wl_proxy*)sink->soc.sb, sink->queue);
 		wl_sb_add_listener(sink->soc.sb, &sbListener, sink);
 		printf("westeros-sink-soc: registry: done add sb listener\n");

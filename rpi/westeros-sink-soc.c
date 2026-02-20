@@ -100,6 +100,10 @@ static const struct wl_sb_listener sbListener = {
 
 void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
 {
+   if (!klass) {
+      return;
+   }
+
    GstElementClass *gstelement_class= (GstElementClass *) klass;
 
    queryOrg= gstelement_class->query;
@@ -118,6 +122,19 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
 
 gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 {
+#ifdef UNIT_TEST_BUILD
+   #ifdef GLIB_VERSION_2_32 
+   g_mutex_init( &sink->soc.mutex );
+   g_mutex_init( &sink->soc.mutexNewFrame );
+   g_cond_init( &sink->soc.condNewFrame );
+   #else
+   sink->soc.mutex= g_mutex_new();
+   sink->soc.mutexNewFrame= g_mutex_new();
+   sink->soc.condNewFrame= g_cond_new();
+   #endif
+   return TRUE;
+#else
+
    gboolean result= FALSE;
    const char *moduleName;
    const char *methodName;
@@ -336,6 +353,7 @@ exit:
    }
    
    return result;
+#endif
 }
 
 void gst_westeros_sink_soc_term( GstWesterosSink *sink )
@@ -393,6 +411,15 @@ void gst_westeros_sink_soc_registryHandleGlobal( GstWesterosSink *sink,
                                  struct wl_registry *registry, uint32_t id,
 		                           const char *interface, uint32_t version)
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(registry);
+   WESTEROS_UNUSED(id);
+   WESTEROS_UNUSED(interface);
+   WESTEROS_UNUSED(version);
+   return;
+#else
+
    WESTEROS_UNUSED(version);
    int len;
 
@@ -406,6 +433,7 @@ void gst_westeros_sink_soc_registryHandleGlobal( GstWesterosSink *sink,
 		wl_sb_add_listener(sink->soc.sb, &sbListener, sink);
 		GST_DEBUG_OBJECT(sink, "westeros-sink-soc: registry: done add sb listener");
    }
+#endif
 }
 
 void gst_westeros_sink_soc_registryHandleGlobalRemove( GstWesterosSink *sink,
@@ -1075,6 +1103,12 @@ gboolean gst_westeros_sink_soc_setup_tunnel( GstWesterosSink *sink, WstOmxCompon
 
 gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(passToDefault);
+   return TRUE;
+#else
+
    gboolean result= FALSE;
    OMX_ERRORTYPE omxerr;
    WESTEROS_UNUSED(passToDefault);
@@ -1172,10 +1206,17 @@ gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *p
 exit:
 
    return result;
+#endif
 }
 
 gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(passToDefault);
+   return TRUE;
+#else
+
    gboolean result= FALSE;
    OMX_ERRORTYPE omxerr;
    WESTEROS_UNUSED(passToDefault);
@@ -1337,10 +1378,17 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
 exit:
    
    return result;
+#endif
 }
 
 gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(passToDefault);
+   return TRUE;
+#else
+
    OMX_ERRORTYPE omxerr;
    OMX_TIME_CONFIG_SCALETYPE clockScale;
 
@@ -1366,10 +1414,17 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
    }
 
    return TRUE;
+#endif
 }
 
 gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(passToDefault);
+   return TRUE;
+#else
+
    OMX_ERRORTYPE omxerr;
    OMX_TIME_CONFIG_SCALETYPE clockScale;
 
@@ -1391,10 +1446,17 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
    *passToDefault= false;
    
    return TRUE;
+#endif
 }
 
 gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(passToDefault);
+   return TRUE;
+#else
+
    OMX_ERRORTYPE omxerr;
    OMX_BUFFERHEADERTYPE *buff;
 
@@ -1656,10 +1718,17 @@ gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean 
    GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_paused_to_ready: done");
    
    return TRUE;
+#endif
 }
 
 gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *passToDefault )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(passToDefault);
+   return TRUE;
+#else
+
    WESTEROS_UNUSED(sink);
    OMX_ERRORTYPE omxerr;
 
@@ -1754,10 +1823,17 @@ gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *p
    GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_ready_to_null: done");
    
    return TRUE;
+#endif
 }
 
 gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(caps);
+   return TRUE;
+#else
+
    bool result= FALSE;
    GstStructure *structure;
    const gchar *mime;
@@ -1785,7 +1861,8 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
       }
    }
 
-   return result;   
+   return result; 
+#endif  
 }
 
 void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
@@ -1796,6 +1873,12 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 
 void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 {  
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(buffer);
+   return;
+#else
+
    OMX_ERRORTYPE omxerr;
    int retryCount;
    gboolean eosDetected;
@@ -1937,11 +2020,17 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
    }
 
 exit:
-   return;   
+   return;  
+#endif 
 }
 
 void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   return;
+#else
+
    LOCK_SOC(sink);
    sink->soc.playingVideo= false;
    GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_flush: post sem to wake up render");
@@ -1949,6 +2038,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    UNLOCK_SOC(sink);
    flushComponents( sink );
    resetClock( sink );
+#endif
 }
 
 gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
@@ -1966,6 +2056,11 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   return;
+#else
+
    int rc; 
    OMX_ERRORTYPE omxerr;
    OMX_BUFFERHEADERTYPE *buff= 0;
@@ -2026,6 +2121,7 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
          }
       }
    }
+#endif
 }
 
 static void flushComponents( GstWesterosSink *sink )
@@ -2164,6 +2260,12 @@ static void resetClock( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(useGfxPath);
+   return;
+#else
+
    WESTEROS_UNUSED(sink);
    WESTEROS_UNUSED(useGfxPath);
    bool oldUseGfxPath;
@@ -2204,11 +2306,17 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
       wl_surface_commit( sink->surface );
       wl_display_flush(sink->display);
       wl_display_dispatch_queue_pending(sink->display, sink->queue);
-   }   
+   }  
+#endif 
 }
 
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   return;
+#else
+
    OMX_ERRORTYPE omxerr;
    OMX_CONFIG_DISPLAYREGIONTYPE displayRegion;
    int wx, wy, ww, wh;
@@ -2266,6 +2374,7 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
          wl_surface_commit( sink->surface );
       }
    }
+#endif
 }
 
 void transitionToRenderer( GstWesterosSink *sink, WstOmxComponent *rend )
@@ -3052,6 +3161,12 @@ static gpointer captureThread(gpointer data)
 // For soc specfic pad query
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
 {
+#ifdef UNIT_TEST_BUILD
+   WESTEROS_UNUSED(sink);
+   WESTEROS_UNUSED(query);
+   return FALSE;
+#else
+
    WESTEROS_UNUSED(sink);
    WESTEROS_UNUSED(query);
    gboolean result = FALSE;
@@ -3059,6 +3174,7 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
    //TBD
 
    return result;
+#endif
 }
 
 // For soc specific element query

@@ -18,18 +18,13 @@
 #define GST_VIDEO_AFD_H
 
 #ifdef NATIVE_BUILD
-
-/* Only define stubs if system headers haven't already provided them */
-/* If gst_buffer_get_video_afd_meta is defined, the system headers were included */
-#ifndef gst_buffer_get_video_afd_meta
-
 /*
  * Stub header for GStreamer Video AFD (Active Format Description) constants
  * These constants are used for aspect ratio and letterbox/pillarbox handling
- * Only included for NATIVE_BUILD to avoid conflicts with actual GStreamer headers
  */
 
-/* AFD (Active Format Description) enum values */
+/* Only declare types if system GStreamer header hasn't already declared them */
+#ifndef __GST_VIDEO_ANC_H__
 typedef enum {
     GST_VIDEO_AFD_UNAVAILABLE = 0,
     GST_VIDEO_AFD_4_3_FULL_16_9_FULL = 2,
@@ -57,11 +52,11 @@ typedef struct {
     int field;
 } GstVideoBarMeta;
 
+#endif /* __GST_VIDEO_ANC_H__ */
+
 /* Stub functions for getting metadata from buffer */
 #define gst_buffer_get_video_afd_meta(buffer) NULL
 #define gst_buffer_get_video_bar_meta(buffer) NULL
-
-#endif /* gst_buffer_get_video_afd_meta */
 
 #endif /* NATIVE_BUILD */
 

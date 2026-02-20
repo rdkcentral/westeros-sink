@@ -1,0 +1,107 @@
+name: L1 Test For westeros-sink
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+jobs:
+  l1-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout westeros-sink repository
+        uses: actions/checkout@v6
+
+      - name: Checkout Westeros main repository
+        uses: actions/checkout@v6
+        with:
+          repository: rdkcentral/westeros
+          path: westeros-cloned
+          token: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout Westeros GL DRM repository
+        uses: actions/checkout@v6
+        with:
+          repository: rdkcentral/westeros-gl-drm
+          path: westeros-gl-drm-cloned
+          token: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
+          fetch-depth: 1
+      
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+          libgtest-dev \
+          lcov \
+          libavcodec-dev \
+          libavutil-dev \
+          gcc-11 \
+          g++-11
+
+      - name: Configure GCC 11 for coverage compatibility
+        run: |
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 110
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 110
+          sudo update-alternatives --install /usr/bin/gcov gcov /usr/bin/gcov-11 110
+          gcc --version
+          gcov --version
+
+      - name: Build Google Test/Mock
+        run: |
+          cd /usr/src/googletest
+          sudo cmake -S . -B build
+          sudo cmake --build build
+          sudo cp build/lib/libgmock.a /usr/lib
+          sudo cp build/lib/libgmock_main.a /usr/lib
+          sudo cp build/lib/libgtest.a /usr/lib
+          sudo cp build/lib/libgtest_main.a /usr/lib
+
+      - name: Make scripts executable
+        run: |
+          # Convert Windows line endings to Unix
+          sed -i 's/\r$//' ./install-dependencies.sh
+          sed -i 's/\r$//' ./L1/generate_coverage.sh
+          chmod +x ./install-dependencies.sh
+          chmod +x ./L1/generate_coverage.sh
+
+      - name: Install dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
+        run: bash ./install-dependencies.sh
+
+      - name: Create L1 build directory
+        run: mkdir -p L1/build
+
+      - name: Configure L1 tests with CMake
+        run: |
+          cd L1/build
+          cmake .. -DENABLE_COVERAGE=ON -DCMAKE_VERBOSE_MAKEFILE=ON 
+
+      - name: Build L1 tests
+        run: |
+          cd L1/build
+          make
+
+      - name: Generate coverage report and run tests
+        env:
+          CFLAGS: "-fprofile-arcs -ftest-coverage"
+          CXXFLAGS: "-fprofile-arcs -ftest-coverage"
+          LDFLAGS: "-fprofile-arcs -ftest-coverage -lgcov"
+        run: |
+          cd L1/build
+          export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+          make coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v6
+        with:
+          name: l1-coverage-report
+          path: L1/build/coverage_html/
+          retention-days: 30

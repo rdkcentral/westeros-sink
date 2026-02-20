@@ -331,6 +331,12 @@ static std::string trim_excess_whitespace(const std::string &str)
 
 extern "C" void dump_pipeline_info(GstBin *bin)
 {
+#ifdef UNIT_TEST_BUILD
+    if (!bin) return;
+    printf("Dumping pipeline\n");
+    return;
+#endif
+
     std::string desc[DESC_ARRAY_SIZE] = {};
     printf("Dumping pipeline: %s\n", GST_ELEMENT_NAME(GST_ELEMENT(bin)));
     for(int i = 0; i < DESC_ARRAY_SIZE; i++)

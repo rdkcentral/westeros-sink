@@ -37,6 +37,14 @@
 
 #define GST_PACKAGE_ORIGIN "http://gstreamer.net/"
 
+#ifdef UNIT_TEST_BUILD
+#define STATIC_FUNC
+#pragma message("UNIT_TEST_BUILD is DEFINED - functions will have external linkage (truly external)")
+#else
+#define STATIC_FUNC static
+#pragma message("UNIT_TEST_BUILD is NOT DEFINED - functions will have internal linkage") 
+#endif
+
 #ifdef USE_PIPELINE_LOGGING
 #include <unistd.h>
 
@@ -93,15 +101,16 @@ static void resMgrRequestDecoder( GstWesterosSink *sink );
 static void resMgrReleaseDecoder( GstWesterosSink *sink );
 static void gst_westeros_sink_term(GstWesterosSink *sink); 
 static void gst_westeros_sink_finalize(GObject *object); 
-static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
-static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
+STATIC_FUNC void gst_westeros_sink_class_init(GstWesterosSinkClass *klass);
+STATIC_FUNC void gst_westeros_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
+STATIC_FUNC void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
 static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, GstStateChange transition);
-static gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query);
-static gboolean gst_westeros_sink_send_event (GstElement * element, GstEvent * event);
-static gboolean gst_westeros_sink_start(GstBaseSink *base_sink);
-static gboolean gst_westeros_sink_stop(GstBaseSink *base_sink);
-static gboolean gst_westeros_sink_unlock(GstBaseSink *base_sink);
-static gboolean gst_westeros_sink_unlock_stop(GstBaseSink *base_sink);
+STATIC_FUNC gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query);
+STATIC_FUNC gboolean gst_westeros_sink_send_event (GstElement * element, GstEvent * event);
+STATIC_FUNC gboolean gst_westeros_sink_start(GstBaseSink *base_sink);
+STATIC_FUNC gboolean gst_westeros_sink_stop(GstBaseSink *base_sink);
+STATIC_FUNC gboolean gst_westeros_sink_unlock(GstBaseSink *base_sink);
+STATIC_FUNC gboolean gst_westeros_sink_unlock_stop(GstBaseSink *base_sink);
 static gboolean gst_westeros_sink_check_caps(GstWesterosSink *sink, GstPad *peer);
 #ifdef USE_GST1
 static gboolean gst_westeros_sink_event(GstPad *pad, GstObject *parent, GstEvent *event);
@@ -114,8 +123,14 @@ static GstPadLinkReturn gst_westeros_sink_link(GstPad *pad, GstPad *peer);
 static void gst_westeros_sink_unlink(GstPad *pad);
 static gboolean gst_westeros_sink_sink_query(GstPad *pad, GstQuery *query);
 #endif
-static GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer *buffer);
-static GstFlowReturn gst_westeros_sink_preroll(GstBaseSink *base_sink, GstBuffer *buffer);
+STATIC_FUNC gboolean gst_westeros_sink_backend_null_to_ready(GstWesterosSink *sink, gboolean *passToDefault);
+STATIC_FUNC gboolean gst_westeros_sink_backend_ready_to_paused(GstWesterosSink *sink, gboolean *passToDefault);
+STATIC_FUNC gboolean gst_westeros_sink_backend_paused_to_playing(GstWesterosSink *sink, gboolean *passToDefault);
+STATIC_FUNC gboolean gst_westeros_sink_backend_playing_to_paused(GstWesterosSink *sink, gboolean *passToDefault);
+STATIC_FUNC gboolean gst_westeros_sink_backend_paused_to_ready(GstWesterosSink *sink, gboolean *passToDefault);
+STATIC_FUNC gboolean gst_westeros_sink_backend_ready_to_null(GstWesterosSink *sink, gboolean *passToDefault);
+STATIC_FUNC GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer *buffer);
+STATIC_FUNC GstFlowReturn gst_westeros_sink_preroll(GstBaseSink *base_sink, GstBuffer *buffer);
 
 
 static void shellSurfaceId(void *data,
@@ -622,8 +637,16 @@ static void resMgrUpdateState( GstWesterosSink *sink, int state )
    }
 }
 
-static gboolean gst_westeros_sink_backend_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
+STATIC_FUNC gboolean gst_westeros_sink_backend_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+     return FALSE;
+   }
+   return FALSE;
+   #endif
+
    gboolean result;
    if ( sink->rm && (sink->resAssignedId < 0) )
    {
@@ -642,8 +665,16 @@ static gboolean gst_westeros_sink_backend_null_to_ready( GstWesterosSink *sink, 
    return result;
 }
 
-static gboolean gst_westeros_sink_backend_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
+STATIC_FUNC gboolean gst_westeros_sink_backend_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return FALSE;
+   #endif
+
    gboolean result;
    if ( sink->rm && (sink->resAssignedId < 0) )
    {
@@ -674,8 +705,16 @@ static gboolean gst_westeros_sink_backend_ready_to_paused( GstWesterosSink *sink
    return result;
 }
 
-static gboolean gst_westeros_sink_backend_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
+STATIC_FUNC gboolean gst_westeros_sink_backend_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return FALSE;
+   #endif
+
    gboolean result;
    if ( sink->rm && (sink->resAssignedId < 0) )
    {
@@ -698,8 +737,16 @@ static gboolean gst_westeros_sink_backend_paused_to_playing( GstWesterosSink *si
    return result;
 }
 
-static gboolean gst_westeros_sink_backend_playing_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
+STATIC_FUNC gboolean gst_westeros_sink_backend_playing_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return FALSE;
+   #endif
+
    gboolean result;
    if ( sink->rm && (sink->resAssignedId < 0) )
    {
@@ -722,8 +769,16 @@ static gboolean gst_westeros_sink_backend_playing_to_paused( GstWesterosSink *si
    return result;
 }
 
-static gboolean gst_westeros_sink_backend_paused_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
+STATIC_FUNC gboolean gst_westeros_sink_backend_paused_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return FALSE;
+   #endif
+
    gboolean result;
    #ifdef ENABLE_SW_DECODE
    if ( sink->rm && (sink->resCurrCaps.capabilities & EssRMgrVidCap_software) )
@@ -742,8 +797,16 @@ static gboolean gst_westeros_sink_backend_paused_to_ready( GstWesterosSink *sink
    return result;
 }
 
-static gboolean gst_westeros_sink_backend_ready_to_null( GstWesterosSink *sink, gboolean *passToDefault )
+STATIC_FUNC gboolean gst_westeros_sink_backend_ready_to_null( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL || passToDefault == NULL)
+   {
+      return FALSE;
+   }
+   return FALSE;
+   #endif
+
    gboolean result;
    #ifdef ENABLE_SW_DECODE
    if ( sink->rm && (sink->resCurrCaps.capabilities & EssRMgrVidCap_software) )
@@ -1092,7 +1155,7 @@ static void gst_westeros_sink_base_init(gpointer g_class)
 }
 #endif
 
-static void gst_westeros_sink_class_init(GstWesterosSinkClass *klass)
+STATIC_FUNC void gst_westeros_sink_class_init(GstWesterosSinkClass *klass)
 {
    GObjectClass *gobject_class= (GObjectClass *) klass;
    GstElementClass *gstelement_class= (GstElementClass *) klass;
@@ -1399,14 +1462,21 @@ static void gst_westeros_sink_finalize(GObject *object)
    GST_CALL_PARENT (G_OBJECT_CLASS, finalize, (object));
 }
 
-static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) 
+STATIC_FUNC void gst_westeros_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) 
 {
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
   
    WESTEROS_UNUSED(pspec);
    WESTEROS_UNUSED(value);
    WESTEROS_UNUSED(sink);
-    
+   
+   #ifdef UNIT_TEST_BUILD
+   if (!pspec || !pspec->name)
+   {
+      return;
+   }
+   #endif
+
    switch (prop_id) 
    {
       case PROP_WINDOW_SET:
@@ -1571,14 +1641,21 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
    }
 }
 
-static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) 
+STATIC_FUNC void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) 
 {
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
   
    WESTEROS_UNUSED(pspec); 
    WESTEROS_UNUSED(value);
    WESTEROS_UNUSED(sink);
-    
+ 
+   #ifdef UNIT_TEST_BUILD
+   if (!pspec || !pspec->name)
+   {
+      return;
+   }
+   #endif
+
    switch (prop_id) 
    {
       case PROP_VIDEO_WIDTH:
@@ -1879,9 +1956,27 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
    return result;
 }
 
-static gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query)
+STATIC_FUNC gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (element == NULL || query == NULL)
+   {
+      return FALSE;
+   }
+   #endif
+
    GstWesterosSink *sink= GST_WESTEROS_SINK(element);
+   
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return FALSE;
+   }
+   #endif
+
+   #ifdef UNIT_TEST_BUILD
+   return FALSE;
+   #endif
 
    switch (GST_QUERY_TYPE(query)) 
    {
@@ -1897,7 +1992,11 @@ static gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query)
             
             if ( GST_FORMAT_BYTES == format )
             {
+               #ifdef UNIT_TEST_BUILD
+               return FALSE;
+               #else
                return GST_ELEMENT_CLASS(parent_class)->query(element, query);
+               #endif
             }
             else
             {
@@ -1929,15 +2028,27 @@ static gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query)
          }
               
       default:
+         #ifdef UNIT_TEST_BUILD
+         return FALSE;
+         #else
          return GST_ELEMENT_CLASS(parent_class)->query (element, query);
+         #endif
    }
 }
 
-static gboolean gst_westeros_sink_send_event(GstElement *element, GstEvent *event)
+STATIC_FUNC gboolean gst_westeros_sink_send_event(GstElement *element, GstEvent *event)
 {
    GstWesterosSink *sink= GST_WESTEROS_SINK(element);
    gboolean result= TRUE;
    gboolean passToDefault= TRUE;
+
+   #ifdef UNIT_TEST_BUILD
+   if (element == NULL || event == NULL || sink == NULL)
+   {
+      return FALSE;
+   }
+   return FALSE;
+   #endif
 
    GST_LOG_OBJECT(sink,"event %s",GST_EVENT_TYPE_NAME(event));
 
@@ -1948,34 +2059,38 @@ static gboolean gst_westeros_sink_send_event(GstElement *element, GstEvent *even
 
    if (passToDefault)
    {
+      #ifdef UNIT_TEST_BUILD
+      return FALSE;
+      #else
       return GST_ELEMENT_CLASS(parent_class)->send_event (element, event);
+      #endif
    }
 
    return result;
 }
 
-static gboolean gst_westeros_sink_start(GstBaseSink *base_sink)
+STATIC_FUNC gboolean gst_westeros_sink_start(GstBaseSink *base_sink)
 {
    WESTEROS_UNUSED(base_sink);
 
    return TRUE;
 }
 
-static gboolean gst_westeros_sink_stop(GstBaseSink *base_sink)
+STATIC_FUNC gboolean gst_westeros_sink_stop(GstBaseSink *base_sink)
 {
    WESTEROS_UNUSED(base_sink);
 
    return TRUE;
 }
 
-static gboolean gst_westeros_sink_unlock(GstBaseSink *base_sink)
+STATIC_FUNC gboolean gst_westeros_sink_unlock(GstBaseSink *base_sink)
 {
    WESTEROS_UNUSED(base_sink);
   
    return TRUE;
 }
 
-static gboolean gst_westeros_sink_unlock_stop(GstBaseSink *base_sink)
+STATIC_FUNC gboolean gst_westeros_sink_unlock_stop(GstBaseSink *base_sink)
 {
    WESTEROS_UNUSED(base_sink);
 
@@ -2343,10 +2458,25 @@ static void gst_westeros_sink_unlink(GstPad *pad)
    return;
 }
 
-static GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer *buffer)
+STATIC_FUNC GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer *buffer)
 {  
+   #ifdef UNIT_TEST_BUILD
+   if (base_sink == NULL || buffer == NULL)
+   {
+      return GST_FLOW_ERROR;
+   }
+   #endif
+
    GstWesterosSink *sink= GST_WESTEROS_SINK(base_sink);
    
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return GST_FLOW_ERROR;
+   }
+   return GST_FLOW_OK;
+   #endif
+
    LOCK( sink );
    sink->eosDetected= FALSE;
    UNLOCK( sink );
@@ -2371,9 +2501,24 @@ static GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer 
    return GST_FLOW_OK;
 }
 
-static GstFlowReturn gst_westeros_sink_preroll(GstBaseSink *base_sink, GstBuffer *buffer)
+STATIC_FUNC GstFlowReturn gst_westeros_sink_preroll(GstBaseSink *base_sink, GstBuffer *buffer)
 {
+   #ifdef UNIT_TEST_BUILD
+   if (base_sink == NULL)
+   {
+      return GST_FLOW_ERROR;
+   }
+   #endif
+
    GstWesterosSink *sink= GST_WESTEROS_SINK(base_sink);
+
+   #ifdef UNIT_TEST_BUILD
+   if (sink == NULL)
+   {
+      return GST_FLOW_ERROR;
+   }
+   return GST_FLOW_OK;
+   #endif
 
    WESTEROS_UNUSED(buffer);
    
