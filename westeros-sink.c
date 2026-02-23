@@ -25,7 +25,7 @@
 
 #include "westeros-sink.h"
 
-#include "westeros-version.h"
+#include "westeros-sink-version.h"
 
 #ifdef ENABLE_SW_DECODE
 #include "../westeros-sink-sw.c"
