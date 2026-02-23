@@ -27,7 +27,7 @@ GST_BASE_CFLAGS ?=
 GST_BASE_LIBS ?=
 LIB_SUB_DIR= gstreamer-0.10
 
-AM_CFLAGS = $(NEXUS_CFLAGS) $(NXCLIENT_CFLAGS) $(GST_CFLAGS) -Wno-unused-but-set-variable -Wno-format-truncation
+AM_CFLAGS = $(NEXUS_CFLAGS) $(NXCLIENT_CFLAGS) $(GST_CFLAGS) -Wno-unused-but-set-variable -Wno-format-truncation -Wno-error=format
 
 AM_LDFLAGS = $(GST_LIBS)  $(GSTBASE_LIBS) $(GSTVIDEO_LIBS) $(WAYLANDLIB) -avoid-version
 

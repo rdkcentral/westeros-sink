@@ -182,7 +182,7 @@ static void sbFormat(void *data, struct wl_sb *wl_sb, uint32_t format)
    WESTEROS_UNUSED(wl_sb);
    GstWesterosSink *sink= (GstWesterosSink*)data;
    WESTEROS_UNUSED(sink);
-   printf("westeros-sink-soc: registry: sbFormat: %X\n", format);
+   printf("westeros-sink-soc: registry: sbFormat: %X %s\n", format);
 }
 
 static const struct wl_sb_listener sbListener = {
