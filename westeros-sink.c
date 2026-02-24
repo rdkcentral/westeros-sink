@@ -1214,9 +1214,6 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    const char *env;
    sink->statsLogUpdate= NULL;
    env= getenv("WESTEROS_SINK_STATS_LOG");
-
-   g_print("westeros-sink version " WESTEROS_SINK_VERSION_FMT, WESTEROS_SINK_VERSION );
-
    if ( env )
    {
       int interval= atoi(env);
