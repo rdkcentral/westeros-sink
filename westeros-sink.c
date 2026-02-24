@@ -25,7 +25,7 @@
 
 #include "westeros-sink.h"
 
-#include "westeros-version.h"
+#include "westeros-sink-version.h"
 
 #ifdef ENABLE_SW_DECODE
 #include "../westeros-sink-sw.c"
@@ -1650,7 +1650,7 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
    {
       case GST_STATE_CHANGE_NULL_TO_READY:
       {
-         printf("westeros (sink) version " WESTEROS_VERSION_FMT "\n", WESTEROS_VERSION );
+         printf("westeros (sink) version " WESTEROS_SINK_VERSION_FMT "\n", WESTEROS_SINK_VERSION );
          printf("gst version %d.%d.%d\n", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
 
          resMgrInit(sink);
