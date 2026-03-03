@@ -2871,6 +2871,8 @@ static void updateVideoStatus( GstWesterosSink *sink )
    flushStarted= sink->flushStarted;
    UNLOCK( sink );
 
+   GST_LOG("updateVideoStatus: FUNCTION_ENTRY - videoPlaying=%d haveHardware=%d", videoPlaying, haveHardware);
+
    if ( haveHardware == FALSE )
    {
       return;
@@ -2919,6 +2921,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
          else
          if ( (videoStatus.firstPtsPassed || videoStatus.numDecoded > sink->soc.numDecoded) && (sink->currentPTS/2 != videoStatus.pts) )
          {
+            GST_LOG("DECODER_OUTPUT_FRAME: frameCount=%d firstPts=%"G_GINT64_FORMAT" currentPTS=%"G_GINT64_FORMAT, sink->soc.frameCount, sink->firstPTS, sink->currentPTS);
             sink->soc.ignoreDiscontinuity= FALSE;
             sink->soc.numDecoded= videoStatus.numDecoded;
             prevPTS= sink->currentPTS;
@@ -2929,25 +2932,39 @@ static void updateVideoStatus( GstWesterosSink *sink )
             sink->currentPTS= ((gint64)videoStatus.pts)*2LL;
             if (sink->prevPositionSegmentStart != sink->positionSegmentStart)
             {
+               GST_WARNING("ENTERING_SEGMENT_CHANGE: prevPos=%"G_GINT64_FORMAT" newPos=%"G_GINT64_FORMAT" currentPTS=%"G_GINT64_FORMAT, sink->prevPositionSegmentStart, sink->positionSegmentStart, sink->currentPTS);
                gboolean useStartPTS = (sink->currentPTS > sink->startPTS) && ((sink->currentPTS - sink->startPTS) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90LL);
                GST_DEBUG("currentPTS %"G_GINT64_FORMAT" %"G_GINT64_FORMAT"ms  startPTS %"G_GINT64_FORMAT" %"G_GINT64_FORMAT"ms  useStartPTS %d", sink->currentPTS, sink->currentPTS/90LL, sink->startPTS, sink->startPTS/90LL, useStartPTS);
                if ( sink->currentPTS == 0 || useStartPTS)
                {
                   // sometimes the first PTS is not exactly 0, so
                   // if segStart - first PTS is small, take the segment start as the base for the position
-                  GST_LOG("firstPTS  setting to  startPTS %"G_GINT64_FORMAT" %ums", sink->startPTS, (guint)(sink->startPTS/90LL));
-                  sink->firstPTS= sink->startPTS;
+               // GST_LOG("firstPTS  setting to  startPTS %"G_GINT64_FORMAT" %ums", sink->startPTS, (guint)(sink->startPTS/90LL));
+                 // sink->firstPTS= sink->startPTS;
+                  GST_LOG("Deferring firstPTS update to startPTS %"G_GINT64_FORMAT" %ums", sink->startPTS, (guint)(sink->startPTS/90LL));
+                  sink->soc.pendingFirstPTS= sink->startPTS;		 
                }
                else
                {
-                  GST_LOG("firstPTS  setting to  currentPTS %"G_GINT64_FORMAT" %ums", sink->currentPTS, (guint)(sink->currentPTS/90LL));
-                  sink->firstPTS= sink->currentPTS;
+                 // GST_LOG("firstPTS  setting to  currentPTS %"G_GINT64_FORMAT" %ums", sink->currentPTS, (guint)(sink->currentPTS/90LL));
+                 //sink->firstPTS= sink->currentPTS;
+                  GST_LOG("Deferring firstPTS update to currentPTS %"G_GINT64_FORMAT" %ums", sink->currentPTS, (guint)(sink->currentPTS/90LL));
+                  sink->soc.pendingFirstPTS= sink->currentPTS; 
                }
-               sink->prevPositionSegmentStart = sink->positionSegmentStart;
-               GST_DEBUG("SegmentStart changed! Updating first PTS to 0x%"G_GUINT64_FORMAT" %ums ", sink->firstPTS, (guint)sink->firstPTS/90);
+               //sink->prevPositionSegmentStart = sink->positionSegmentStart;
+               //GST_DEBUG("SegmentStart changed! Updating first PTS to 0x%"G_GUINT64_FORMAT" %ums ", sink->firstPTS, (guint)sink->firstPTS/90);
+               sink->soc.waitingForFirstPTSAfterSegment= TRUE;
+               GST_DEBUG("SegmentStart changed! Deferring first PTS update to 0x%"G_GUINT64_FORMAT" %ums ", sink->soc.pendingFirstPTS, (guint)sink->soc.pendingFirstPTS/90);
             }
             if ( sink->currentPTS != 0 || sink->soc.frameCount == 0 )
             {
+               if ( sink->soc.waitingForFirstPTSAfterSegment && (sink->currentPTS >= sink->soc.pendingFirstPTS) )
+               {
+                  GST_WARNING("DEFERRED_UPDATE_APPLIED: currentPTS=%"G_GINT64_FORMAT" >= pendingFirstPTS=%"G_GINT64_FORMAT" APPLYING NOW", sink->currentPTS, sink->soc.pendingFirstPTS);		          sink->firstPTS= sink->soc.pendingFirstPTS;
+                  sink->soc.waitingForFirstPTSAfterSegment= FALSE;
+                  sink->prevPositionSegmentStart = sink->positionSegmentStart;
+                  GST_DEBUG("Applying deferred first PTS update to 0x%"G_GUINT64_FORMAT" %ums ", sink->firstPTS, (guint)sink->firstPTS/90);
+               }
                if ( (sink->currentPTS < sink->firstPTS) && (sink->currentPTS > 90000) && prevPTS )
                {
                   // If we have hit a discontinuity that doesn't look like rollover, then
