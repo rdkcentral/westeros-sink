@@ -10,7 +10,7 @@ the application that has created the embedded Wayland compositor to incorporate 
 applications UI.  This allows for easy integration of the UI of external third party applications into an
 applications's UI.
 
---
+---
 # Copyright and license
 
 Westeros sink is licensed under the LGPLv2.1 license. 
