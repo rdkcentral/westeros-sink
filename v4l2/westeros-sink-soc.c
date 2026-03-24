@@ -5536,6 +5536,33 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                               }
 
                               /* Position calculation for valid (non-stale) frameTime only */
+
+                              /*
+                               * Guard against race window: firstPTS is updated lazily on the
+                               * first input buffer arriving in gst_westeros_sink_soc_render()
+                               * after a segment event.  If that buffer has not yet been
+                               * processed (prevPositionSegmentStart still differs from
+                               * positionSegmentStart), firstPTS still holds the previous
+                               * segment's value.  Using it here would produce a wrong position.
+                               * The segment event handler already initialised sink->position to
+                               * positionSegmentStart, so simply skip the update until firstPTS
+                               * is in sync.
+                               */
+                              if ( sink->prevPositionSegmentStart != sink->positionSegmentStart )
+                              {
+                                 GST_DEBUG("firstPTS not yet updated for new segment (prevSegStart %lld segStart %lld), skip position update",
+                                           sink->prevPositionSegmentStart, sink->positionSegmentStart);
+                                 if (sink->soc.frameOutCount > 0 )
+                                 {
+                                    if (sink->soc.frameDisplayCount == 0)
+                                    {
+                                       sink->soc.emitFirstFrameSignal= TRUE;
+                                    }
+                                    ++sink->soc.frameDisplayCount;
+                                 }
+                                 break;
+                              }
+
                               gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
                               sink->position= sink->positionSegmentStart + currentNano - firstNano;
                               sink->currentPTS = nanoTimeToPTS(currentNano);
@@ -7314,6 +7341,29 @@ capture_start:
             if ( !sink->soc.conn )
             {
                /* If we are not connected to a video server, set position here */
+
+               /*
+                * Reject frames that predate the current segment start.  During
+                * seek operations, stale decoded frames can still drain from the
+                * V4L2 output queue after the new segment has been applied.
+                */
+               if ( frameTime < sink->segment.start )
+               {
+                  GST_DEBUG("Stale frameTime: %lld ns before segment start: %lld ns. Skip position update.",
+                            frameTime, sink->segment.start);
+               }
+               /*
+                * firstPTS is refreshed lazily on the first input buffer of the
+                * new segment.  Until then, keep the segment-start position set
+                * by the segment event handler.
+                */
+               else if ( sink->prevPositionSegmentStart != sink->positionSegmentStart )
+               {
+                  GST_DEBUG("firstPTS not yet updated for new segment (prevSegStart %lld segStart %lld), skip position update",
+                            sink->prevPositionSegmentStart, sink->positionSegmentStart);
+               }
+               else
+               {
                gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
                sink->position= sink->positionSegmentStart + frameTime - firstNano;
                sink->currentPTS = nanoTimeToPTS(frameTime);
@@ -7321,6 +7371,7 @@ capture_start:
                if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
                {
                   sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
+               }
                }
             }
 
