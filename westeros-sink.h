@@ -86,6 +86,7 @@ typedef void* (*MediaCaptureCreateContext)( GstElement *element );
 typedef void (*MediaCaptureDestroyContext)( void *context );
 
 #define PROP_SOC_BASE (100)
+#define PROP_RAW_BASE (200)
 
 typedef struct _WstSinkResReqInfo
 {
@@ -101,7 +102,15 @@ typedef struct _WstSinkTimeCode
    guint seconds;
 } WstSinkTimeCode;
 
+typedef enum _WstSinkMode
+{
+   WST_SINK_MODE_UNKNOWN = 0,
+   WST_SINK_MODE_RAW,
+   WST_SINK_MODE_ENCODED
+} WstSinkMode;
+
 #include "westeros-sink-soc.h"
+#include "westeros-sink-raw.h"
 
 struct _GstWesterosSink
 {
@@ -151,6 +160,11 @@ struct _GstWesterosSink
    int scaleYDenom;
    int outputWidth;
    int outputHeight;
+
+   WstSinkMode sinkMode;
+   gboolean pathInitialized;
+   gboolean useRawMode;
+
 
    gboolean videoStarted;
    gboolean startAfterLink;
@@ -226,6 +240,7 @@ struct _GstWesterosSink
    int statsLogFrameRenderCountLast;
 
    struct _GstWesterosSinkSoc soc;
+   struct _GstWesterosSinkRaw raw;
 };
 
 struct _GstWesterosSinkClass
@@ -249,5 +264,7 @@ G_END_DECLS
 
 void gst_westeros_sink_eos_detected( GstWesterosSink *sink );
 
-#endif
+static gboolean wstInitRawPath( GstWesterosSink *sink );
+static void wstTeardownCurrentPath( GstWesterosSink *sink );
 
+#endif

@@ -172,7 +172,7 @@ static gboolean (*queryOrg)(GstElement *element, GstQuery *query)= 0;
 static struct vcodec *g_vcodec = NULL;
 
 static void wstSinkSocStopVideo( GstWesterosSink *sink );
-static void wstBuildSinkCaps( GstWesterosSinkClass *klass, GstWesterosSink *dummySink );
+// static void wstBuildSinkCaps( GstWesterosSinkClass *klass, GstWesterosSink *dummySink );
 static void wstDiscoverVideoDecoder( GstWesterosSinkClass *klass );
 static void wstStartEvents( GstWesterosSink *sink );
 static void wstStopEvents( GstWesterosSink *sink );
@@ -2963,11 +2963,34 @@ static void wstBuildSinkCaps( GstWesterosSinkClass *klass, GstWesterosSink *dumm
             default:
                break;
          }
+         
          if ( capsTemp )
          {
             gst_caps_append( caps, capsTemp );
             capsTemp =0;
          }
+      }
+      // Append the raw caps along with the soc caps to create the padtemplate.
+
+      // There is still one more thing which is not clear. This function is called only if we detect encoded formats. 
+      // So how will the raw work from here ? 
+      capsTemp= gst_caps_from_string(
+                                    "video/x-raw, " \
+                                    "format=(string) { NV12, I420, YU12 }"
+                                 );
+      if ( capsTemp )
+      {
+         gst_caps_append( caps, capsTemp );
+         capsTemp =0;
+      }
+
+      capsTemp= gst_caps_from_string(
+                                       "video/x-westeros-raw "
+                                    );
+      if ( capsTemp )
+      {
+         gst_caps_append( caps, capsTemp );
+         capsTemp =0;
       }
 
       padTemplate= gst_pad_template_new( "sink",

@@ -364,6 +364,7 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink );
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath );
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink );
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query );
+static void wstBuildSinkCaps( GstWesterosSinkClass *klass, GstWesterosSink *dummySink );
 
 #endif
 
