@@ -25,7 +25,7 @@
 
 #include "westeros-sink.h"
 
-#include "westeros-sink-version.h"
+#include "../westeros-sink-version.h"
 
 #ifdef ENABLE_SW_DECODE
 #include "../westeros-sink-sw.c"
@@ -58,7 +58,8 @@ static GstStaticPadTemplate gst_westeros_sink_pad_template =
 GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS(WESTEROS_SINK_CAPS));
+    GST_STATIC_CAPS( WESTEROS_SINK_CAPS ";" WESTEROS_SINK_RAW_CAPS )
+    );
 
 GST_DEBUG_CATEGORY (gst_westeros_sink_debug);
 #define GST_CAT_DEFAULT gst_westeros_sink_debug
@@ -236,7 +237,18 @@ static void vpcVideoPathChange(void *data,
    }
    #endif
    printf("westeros-sink: new pathway: %d\n", new_pathway);
-   gst_westeros_sink_soc_set_video_path( sink, (new_pathway == WL_VPC_SURFACE_PATHWAY_GRAPHICS) );
+
+   if ( sink->useRawMode )
+   {
+      GST_DEBUG("vpcVideoPathChange: set raw video path");
+      gst_westeros_sink_raw_set_video_path( sink, (new_pathway == WL_VPC_SURFACE_PATHWAY_GRAPHICS) );
+   }
+   else
+   {
+       GST_DEBUG("vpcVideoPathChange: set soc video path");
+       gst_westeros_sink_soc_set_video_path( sink, (new_pathway == WL_VPC_SURFACE_PATHWAY_GRAPHICS) );
+   }
+   // gst_westeros_sink_soc_set_video_path( sink, (new_pathway == WL_VPC_SURFACE_PATHWAY_GRAPHICS) );
 }                               
 
 static void vpcVideoXformChange(void *data,
@@ -276,7 +288,16 @@ static void vpcVideoXformChange(void *data,
    #endif
    
    LOCK( sink );
-   gst_westeros_sink_soc_update_video_position( sink );
+   if ( sink->useRawMode )
+   {
+      GST_DEBUG("vpcVideoXformChange: update raw video position");
+      gst_westeros_sink_raw_update_video_position( sink );
+   }
+   else
+   {
+      GST_DEBUG("vpcVideoXformChange: update soc video position");
+      gst_westeros_sink_soc_update_video_position( sink );
+   }
    UNLOCK( sink );
 }
 
@@ -408,7 +429,17 @@ static void registryHandleGlobal(void *data,
       wl_proxy_set_queue((struct wl_proxy*)sink->output, sink->queue);
       wl_output_add_listener(sink->output, &outputListener, sink);
    }
-   gst_westeros_sink_soc_registryHandleGlobal( sink, registry, id, interface, version );
+
+   if ( sink->useRawMode )
+   {
+      GST_DEBUG("registryHandleGlobal: handle raw registry global");
+      gst_westeros_sink_raw_registryHandleGlobal( sink, registry, id, interface, version );
+   }
+   else
+   {
+      GST_DEBUG("registryHandleGlobal: handle soc registry global");
+      gst_westeros_sink_soc_registryHandleGlobal( sink, registry, id, interface, version );
+   }
 
    wl_display_flush(sink->display);
 }
@@ -419,7 +450,16 @@ static void registryHandleGlobalRemove(void *data,
 {
    GstWesterosSink *sink= (GstWesterosSink*)data;
 
-   gst_westeros_sink_soc_registryHandleGlobalRemove( sink, registry, name );
+   if ( sink->useRawMode )
+   {
+      GST_DEBUG("registryHandleGlobalRemove: handle raw registry global remove");
+      gst_westeros_sink_raw_registryHandleGlobalRemove( sink, registry, name );
+   }
+   else
+   {
+      GST_DEBUG("registryHandleGlobalRemove: handle soc registry global remove");
+      gst_westeros_sink_soc_registryHandleGlobalRemove( sink, registry, name );
+   }
 }
 
 #define DEFAULT_USAGE (EssRMgrVidUse_fullResolution|EssRMgrVidUse_fullQuality|EssRMgrVidUse_fullPerformance)
@@ -635,6 +675,10 @@ static gboolean gst_westeros_sink_backend_null_to_ready( GstWesterosSink *sink, 
       result= wstsw_null_to_ready( sink, passToDefault );
    }
    #endif
+   else if ( sink->useRawMode )
+   {
+      result= gst_westeros_sink_raw_null_to_ready( sink, passToDefault );
+   }
    else
    {
       result= gst_westeros_sink_soc_null_to_ready( sink, passToDefault );
@@ -663,8 +707,14 @@ static gboolean gst_westeros_sink_backend_ready_to_paused( GstWesterosSink *sink
       result= wstsw_ready_to_paused( sink, passToDefault );
    }
    #endif
+   if ( sink->useRawMode )
+   {
+      GST_DEBUG("gst_westeros_sink_backend_ready_to_paused: use raw mode");
+      result= gst_westeros_sink_raw_ready_to_paused( sink, passToDefault );
+   }
    else
    {
+      GST_DEBUG("gst_westeros_sink_backend_ready_to_paused: use soc mode");
       result= gst_westeros_sink_soc_ready_to_paused( sink, passToDefault );
    }
    if ( result && sink->rm && sink->resAssignedId >= 0 )
@@ -687,8 +737,14 @@ static gboolean gst_westeros_sink_backend_paused_to_playing( GstWesterosSink *si
       result= wstsw_paused_to_playing( sink, passToDefault );
    }
    #endif
+   if ( sink->useRawMode )
+   {
+      GST_DEBUG("gst_westeros_sink_backend_paused_to_playing: use raw mode");
+      result= gst_westeros_sink_raw_paused_to_playing( sink, passToDefault );
+   }
    else
    {
+      GST_DEBUG("gst_westeros_sink_backend_paused_to_playing: use soc mode");
       result= gst_westeros_sink_soc_paused_to_playing( sink, passToDefault );
    }
    if ( result && sink->rm && sink->resAssignedId >= 0 )
@@ -711,8 +767,14 @@ static gboolean gst_westeros_sink_backend_playing_to_paused( GstWesterosSink *si
       result= wstsw_playing_to_paused( sink, passToDefault );
    }
    #endif
+   if ( sink->useRawMode )
+   {
+      GST_DEBUG("gst_westeros_sink_backend_playing_to_paused: use raw mode");
+      result= gst_westeros_sink_raw_playing_to_paused( sink, passToDefault );
+   }
    else
    {
+      GST_DEBUG("gst_westeros_sink_backend_playing_to_paused: use soc mode");
       result= gst_westeros_sink_soc_playing_to_paused( sink, passToDefault );
    }
    if ( result && sink->rm && sink->resAssignedId >= 0 )
@@ -732,7 +794,14 @@ static gboolean gst_westeros_sink_backend_paused_to_ready( GstWesterosSink *sink
    }
    else
    #endif
+   if ( sink->useRawMode )
    {
+      GST_DEBUG("gst_westeros_sink_backend_paused_to_ready: use raw mode");
+      result= gst_westeros_sink_raw_paused_to_ready( sink, passToDefault );
+   }
+   else
+   {
+      GST_DEBUG("gst_westeros_sink_backend_paused_to_ready: use soc mode");
       result= gst_westeros_sink_soc_paused_to_ready( sink, passToDefault );
    }
    if ( sink->rm && sink->resAssignedId >= 0 )
@@ -752,7 +821,14 @@ static gboolean gst_westeros_sink_backend_ready_to_null( GstWesterosSink *sink, 
    }
    else
    #endif
+   if ( sink->useRawMode )
    {
+      GST_DEBUG("gst_westeros_sink_backend_ready_to_null: use raw mode");
+      result= gst_westeros_sink_raw_ready_to_null( sink, passToDefault );
+   }
+   else
+   {
+      GST_DEBUG("gst_westeros_sink_backend_ready_to_null: use soc mode");
       result= gst_westeros_sink_soc_ready_to_null( sink, passToDefault );
    }
    return result;
@@ -1065,6 +1141,7 @@ static void sinkStatsLogUpdate( GstWesterosSink *sink, int frameRenderCount, int
 #ifndef USE_GST1
 static void gst_westeros_sink_base_init(gpointer g_class)
 {
+  GST_DEBUG("gst_westeros_sink_base_init: invoked");
   GstElementClass *gstelement_class = GST_ELEMENT_CLASS (g_class);
 
   GST_DEBUG_CATEGORY_INIT (gst_westeros_sink_debug,
@@ -1105,7 +1182,8 @@ static void gst_westeros_sink_class_init(GstWesterosSinkClass *klass)
    gstelement_class->change_state= gst_westeros_sink_change_state;
    gstelement_class->query= gst_westeros_sink_query;
    gstelement_class->send_event= gst_westeros_sink_send_event;
-   
+   gstbasesink_class->get_caps   = gst_westeros_sink_get_caps;
+
    gstbasesink_class->start= GST_DEBUG_FUNCPTR (gst_westeros_sink_start);
    gstbasesink_class->stop= GST_DEBUG_FUNCPTR (gst_westeros_sink_stop);
    gstbasesink_class->unlock= GST_DEBUG_FUNCPTR (gst_westeros_sink_unlock);
@@ -1159,6 +1237,8 @@ static void gst_westeros_sink_class_init(GstWesterosSinkClass *klass)
            "Name of wayland display to use",
            NULL, G_PARAM_WRITABLE));
 
+   // Common properties from soc and raw implementations:
+
 #ifdef USE_GST1
   GST_DEBUG_CATEGORY_INIT (gst_westeros_sink_debug,
                            #ifdef USE_RAW_SINK
@@ -1184,8 +1264,27 @@ static void gst_westeros_sink_class_init(GstWesterosSinkClass *klass)
       "Comcast");
 #endif
 
-   klass->canUseResMgr= 0;
+   GST_DEBUG("gst_westeros_sink_class_init: calling soc and raw class init");
    gst_westeros_sink_soc_class_init(klass);
+   gst_westeros_sink_raw_class_init(klass);
+ 
+   klass->canUseResMgr= 0;
+   GST_DEBUG("gst_westeros_sink_class_init: enter");
+   
+
+   // Re-register combined pad template after SOC has dynamically set its caps
+   // GstPadTemplate *sinkTemplate = gst_element_class_get_pad_template(gstelement_class, "sink");
+   // if (sinkTemplate)
+   // {
+   //    GstCaps *rawCaps = gst_caps_from_string(WESTEROS_SINK_RAW_CAPS);
+   //    if (rawCaps)
+   //    {
+   //       GstCaps *existing = gst_caps_copy(gst_pad_template_get_caps(sinkTemplate));
+   //       GstCaps *merged = gst_caps_merge(existing, rawCaps); /* takes ownership of both */
+   //       gst_caps_replace(&sinkTemplate->caps, merged);
+   //       gst_caps_unref(merged);
+   //    }
+   // }
 
    if ( resMgrCheckUse(klass) )
    {
@@ -1209,6 +1308,7 @@ gst_westeros_sink_init(GstWesterosSink *sink)
 #else
 gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass) 
 {
+   GST_DEBUG("gst_westeros_sink_init: invoked");
    WESTEROS_UNUSED(gclass);
 #endif
    const char *env;
@@ -1244,6 +1344,10 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    gst_base_sink_set_async_enabled(GST_BASE_SINK(sink), FALSE);
 
    sink->initialized= TRUE;
+
+   sink->sinkMode        = WST_SINK_MODE_UNKNOWN;
+   sink->pathInitialized = FALSE;
+   sink->useRawMode      = FALSE;
    
    #ifdef GLIB_VERSION_2_32 
    g_mutex_init( &sink->mutex );
@@ -1258,7 +1362,7 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    sink->needSegment= TRUE;
    sink->passCaps= FALSE;
    sink->rejectPrerollBuffers= FALSE;
-   
+      
    sink->srcWidth= 0;
    sink->srcHeight= 0;
    sink->maxWidth= 0;
@@ -1352,6 +1456,8 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    }
 #endif //USE_PIPELINE_LOGGING
 
+   // Don't init the soc sink here:
+#if 0
    if ( gst_westeros_sink_soc_init( sink ) == TRUE )
    {
       sink->registry= 0;
@@ -1361,15 +1467,18 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
       sink->vpc= 0;
       sink->vpcSurface= 0;
       sink->output= 0;
+      sink->socInited= TRUE;
    }
    else
    {
       GST_ERROR("gst_westeros_sink_init: soc_init failed");
    }
+#endif
 }
 
 static void gst_westeros_sink_term(GstWesterosSink *sink)
 {
+   GST_DEBUG("gst_westeros_sink_term");
    sink->initialized= FALSE;
 
    if ( sink->displayName )
@@ -1378,7 +1487,8 @@ static void gst_westeros_sink_term(GstWesterosSink *sink)
       sink->displayName= 0;
    }
 
-   gst_westeros_sink_soc_term( sink );
+   // Teardown the current active path
+   wstTeardownCurrentPath( sink );
 
    #ifdef GLIB_VERSION_2_32 
    g_mutex_clear( &sink->mutex );
@@ -1390,6 +1500,7 @@ static void gst_westeros_sink_term(GstWesterosSink *sink)
 static void gst_westeros_sink_finalize(GObject *object) 
 {
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
+   GST_DEBUG("gst_westeros_sink_finalize");
 
    if ( sink->initialized )
    {
@@ -1397,6 +1508,46 @@ static void gst_westeros_sink_finalize(GObject *object)
    }
 
    GST_CALL_PARENT (G_OBJECT_CLASS, finalize, (object));
+}
+
+static GstCaps* gst_westeros_sink_get_caps( GstBaseSink *base, 
+                                             GstCaps *filter )
+{
+   GST_DEBUG("gst_westeros_sink_get_caps: should be invoked from _class_init");
+   GstWesterosSink *sink= GST_WESTEROS_SINK(base);
+   GstCaps *caps= NULL;
+
+   if ( sink->pathInitialized )
+   {
+      // Path already selected - return specific caps
+      if ( sink->useRawMode )
+         caps= gst_caps_from_string( WESTEROS_SINK_RAW_CAPS );
+      else
+         caps= gst_caps_from_string( WESTEROS_SINK_CAPS );
+   }
+   else
+   {
+      // Path not yet selected - return combined caps
+      caps= gst_caps_new_empty();
+
+      GstCaps *rawCaps= gst_caps_from_string( WESTEROS_SINK_RAW_CAPS );
+      GstCaps *encCaps= gst_caps_from_string( WESTEROS_SINK_CAPS );
+
+      gst_caps_append( caps, rawCaps );
+      gst_caps_append( caps, encCaps );
+   }
+
+   // Apply filter
+   if ( filter && caps )
+   {
+      GstCaps *intersection= gst_caps_intersect_full( filter,
+                                                       caps,
+                                                       GST_CAPS_INTERSECT_FIRST );
+      gst_caps_unref( caps );
+      caps= intersection;
+   }
+
+   return caps;
 }
 
 static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) 
@@ -1566,7 +1717,20 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
       }
 
       default:
-         gst_westeros_sink_soc_set_property(object, prop_id, value, pspec);
+         if ( sink->useRawMode && prop_id >= PROP_RAW_BASE)
+         {
+            GST_DEBUG("gst_westeros_sink_set_property: dispatching to raw set_property, prop_id %d", prop_id);
+            gst_westeros_sink_raw_set_property(object, prop_id, value, pspec);
+         }
+         else if ( !sink->useRawMode && prop_id >= PROP_SOC_BASE )
+         {
+            GST_DEBUG("gst_westeros_sink_set_property: dispatching to soc set_property, prop_id %d", prop_id);
+            gst_westeros_sink_soc_set_property(object, prop_id, value, pspec);
+         }
+         else
+         {
+            G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+         }
          break;
    }
 }
@@ -1623,13 +1787,23 @@ static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValu
          }
          break;
       default:
-         gst_westeros_sink_soc_get_property(object, prop_id, value, pspec);
+         if ( sink->useRawMode && prop_id >= PROP_RAW_BASE)
+         {
+            GST_DEBUG("gst_westeros_sink_get_property: dispatching to raw get_property, prop_id %d", prop_id);
+            gst_westeros_sink_raw_get_property(object, prop_id, value, pspec);
+         }
+         else if ( !sink->useRawMode && prop_id >= PROP_SOC_BASE )
+         {
+            GST_DEBUG("gst_westeros_sink_get_property: dispatching to soc get_property, prop_id %d", prop_id);
+            gst_westeros_sink_soc_get_property(object, prop_id, value, pspec);
+         }
          break;
    }
 }
 
 static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, GstStateChange transition)
 {
+   GST_DEBUG("gst_westeros_sink_change_state: enter");
    GstStateChangeReturn result= GST_STATE_CHANGE_SUCCESS;
    GstWesterosSink *sink= GST_WESTEROS_SINK(element);
    gboolean passToDefault= true;
@@ -1650,100 +1824,113 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
    {
       case GST_STATE_CHANGE_NULL_TO_READY:
       {
-         printf("westeros (sink) version " WESTEROS_SINK_VERSION_FMT "\n", WESTEROS_SINK_VERSION );
-         printf("gst version %d.%d.%d\n", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
+         GST_DEBUG("State: NULL→READY (path not yet selected)");
+         // printf("westeros (sink) version " WESTEROS_SINK_VERSION_FMT "\n", WESTEROS_SINK_VERSION );
+         // printf("gst version %d.%d.%d\n", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
+         // resMgrInit(sink);
+         // resMgrRequestDecoder(sink);
+         // sink->position= GST_CLOCK_TIME_NONE;
+         // sink->eosDetected= FALSE;
+         // sink->eosEventSeen= FALSE;
+         sink->sinkMode        = WST_SINK_MODE_UNKNOWN;
+         sink->pathInitialized = FALSE;
 
-         resMgrInit(sink);
-         resMgrRequestDecoder(sink);
-
-         sink->position= GST_CLOCK_TIME_NONE;
-         sink->eosDetected= FALSE;
-         sink->eosEventSeen= FALSE;
-         if ( !gst_westeros_sink_backend_null_to_ready(sink, &passToDefault) )
-         {
-            result= GST_STATE_CHANGE_FAILURE;
-            break;
-         }
+         // if ( !gst_westeros_sink_backend_null_to_ready(sink, &passToDefault) )
+         // {
+         //    result= GST_STATE_CHANGE_FAILURE;
+         //    break;
+         // }
          break;
       }
 
       case GST_STATE_CHANGE_READY_TO_PAUSED:
       {
+         GST_DEBUG("State: READY→PAUSED");
          captureInit(sink);
 
          sink->eosEventSeen= FALSE;
-         if ( gst_westeros_sink_backend_ready_to_paused(sink, &passToDefault) )
+         // Path is supposed to be selected by now as the caps event would've been processed.
+         if ( sink->pathInitialized )
          {
-            sink->rejectPrerollBuffers = !gst_base_sink_is_async_enabled(GST_BASE_SINK(sink));
-
-            if ( !sink->display )
+            // Call the null_to_ready for raw path to invoke the drm init function.
+            if ( sink->useRawMode )
             {
-               sink->display= wl_display_connect(sink->displayName);
+               result= gst_westeros_sink_raw_null_to_ready( sink, passToDefault );
             }
-            if ( sink->display )
+            if ( gst_westeros_sink_backend_ready_to_paused(sink, &passToDefault) )
             {
-               sink->queue= wl_display_create_queue(sink->display);
-               if ( sink->queue )
-               {
-                  sink->registry= wl_display_get_registry( sink->display );
-                  if ( sink->registry )
-                  {
-                     wl_proxy_set_queue((struct wl_proxy*)sink->registry, sink->queue);
-                     wl_registry_add_listener(sink->registry, &registryListener, sink);
-                     wl_display_roundtrip_queue(sink->display,sink->queue);
+               GST_DEBUG("State: READY→PAUSED backend finished successfully");
+               sink->rejectPrerollBuffers = !gst_base_sink_is_async_enabled(GST_BASE_SINK(sink));
 
-                     if ( !sink->compositor )
+               if ( !sink->display )
+               {
+                  sink->display= wl_display_connect(sink->displayName);
+               }
+               if ( sink->display )
+               {
+                  sink->queue= wl_display_create_queue(sink->display);
+                  if ( sink->queue )
+                  {
+                     sink->registry= wl_display_get_registry( sink->display );
+                     if ( sink->registry )
                      {
-                        GST_DEBUG("no compositor yet: retrying");
+                        wl_proxy_set_queue((struct wl_proxy*)sink->registry, sink->queue);
+                        wl_registry_add_listener(sink->registry, &registryListener, sink);
                         wl_display_roundtrip_queue(sink->display,sink->queue);
-                     }
-                     if ( sink->compositor )
-                     {
-                        sink->surface= wl_compositor_create_surface(sink->compositor);
-                        printf("westeros-sink: ready-to-paused: surface=%p\n", (void*)sink->surface);
-                        wl_proxy_set_queue((struct wl_proxy*)sink->surface, sink->queue);
+
+                        if ( !sink->compositor )
+                        {
+                           GST_DEBUG("no compositor yet: retrying");
+                           wl_display_roundtrip_queue(sink->display,sink->queue);
+                        }
+                        if ( sink->compositor )
+                        {
+                           sink->surface= wl_compositor_create_surface(sink->compositor);
+                           printf("westeros-sink: ready-to-paused: surface=%p\n", (void*)sink->surface);
+                           wl_proxy_set_queue((struct wl_proxy*)sink->surface, sink->queue);
+                        }
+                        else
+                        {
+                           GST_ERROR("westeros-sink: ready-to-paused: unable to get compositor");
+                        }
+                        wl_display_flush( sink->display );
                      }
                      else
                      {
-                        GST_ERROR("westeros-sink: ready-to-paused: unable to get compositor");
+                        GST_ERROR("westeros-sink: ready-to-paused: unable to get display registry\n");
                      }
-                     wl_display_flush( sink->display );
                   }
                   else
                   {
-                     GST_ERROR("westeros-sink: ready-to-paused: unable to get display registry\n");
+                     GST_ERROR("westeros-sink: ready-to-paused: unable to create queue\n");
                   }
                }
                else
                {
-                  GST_ERROR("westeros-sink: ready-to-paused: unable to create queue\n");
+                  GST_ERROR("westeros-sink: ready-to-paused: unable to create display\n");
                }
-            }
-            else
-            {
-               GST_ERROR("westeros-sink: ready-to-paused: unable to create display\n");
-            }
 
-            if ( sink->vpc && sink->surface )
-            {
-               sink->vpcSurface= wl_vpc_get_vpc_surface( sink->vpc, sink->surface );
-               if ( sink->vpcSurface )
+               if ( sink->vpc && sink->surface )
                {
-                  wl_vpc_surface_add_listener( sink->vpcSurface, &vpcListener, sink );
-                  wl_proxy_set_queue((struct wl_proxy*)sink->vpcSurface, sink->queue);
-                  wl_vpc_surface_set_geometry( sink->vpcSurface, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight );
-                  wl_display_flush( sink->display );
-                  printf("westeros-sink: ready-to-paused: done add vpcSurface listener\n");
+                  sink->vpcSurface= wl_vpc_get_vpc_surface( sink->vpc, sink->surface );
+                  if ( sink->vpcSurface )
+                  {
+                     wl_vpc_surface_add_listener( sink->vpcSurface, &vpcListener, sink );
+                     wl_proxy_set_queue((struct wl_proxy*)sink->vpcSurface, sink->queue);
+                     wl_vpc_surface_set_geometry( sink->vpcSurface, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight );
+                     wl_display_flush( sink->display );
+                     printf("westeros-sink: ready-to-paused: done add vpcSurface listener\n");
+                  }
+                  else
+                  {
+                     GST_ERROR("westeros-sink: ready-to-paused: failed to create vpcSurface\n");
+                  }
                }
                else
                {
-                  GST_ERROR("westeros-sink: ready-to-paused: failed to create vpcSurface\n");
+                  GST_ERROR("westeros-sink: ready-to-paused: can't create vpc surface: vpc %p surface %p\n",
+                           sink->vpc, sink->surface);
                }
-            }
-            else
-            {
-               GST_ERROR("westeros-sink: ready-to-paused: can't create vpc surface: vpc %p surface %p\n",
-                         sink->vpc, sink->surface);
             }
          }
          else
@@ -1755,6 +1942,14 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
 
       case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       {
+         GST_DEBUG("State: PAUSED→PLAYING");
+
+         if ( !sink->pathInitialized )
+         {
+            GST_ERROR("Path not initialized before PLAYING!");
+            result = GST_STATE_CHANGE_FAILURE;
+         }
+
          if ( !gst_westeros_sink_backend_paused_to_playing( sink, &passToDefault) )
          {
             result= GST_STATE_CHANGE_FAILURE;
@@ -1817,20 +2012,28 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
    {
       case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       {
-         if ( gst_westeros_sink_backend_playing_to_paused( sink, &passToDefault ) )
+         GST_DEBUG("State: PLAYING→PAUSED");
+         if ( sink->pathInitialized )
          {
-            sink->rejectPrerollBuffers = !gst_base_sink_is_async_enabled(GST_BASE_SINK(sink));
+            if ( gst_westeros_sink_backend_playing_to_paused( sink, &passToDefault ) )
+            {
+               sink->rejectPrerollBuffers = !gst_base_sink_is_async_enabled(GST_BASE_SINK(sink));
+            }
          }
          break;
       }
 
       case GST_STATE_CHANGE_PAUSED_TO_READY:
       {
+         GST_DEBUG("State: PAUSED→READY");
          sink->eosEventSeen= FALSE;
          sink->eosDetected= FALSE;
-         if ( gst_westeros_sink_backend_paused_to_ready( sink, &passToDefault ) )
+         if ( sink->pathInitialized )
          {
-            sink->rejectPrerollBuffers = !gst_base_sink_is_async_enabled(GST_BASE_SINK(sink));
+            if ( gst_westeros_sink_backend_paused_to_ready( sink, &passToDefault ) )
+            {
+               sink->rejectPrerollBuffers = !gst_base_sink_is_async_enabled(GST_BASE_SINK(sink));
+            }
          }
 
          releaseWaylandResources( sink );
@@ -1845,7 +2048,8 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
 
       case GST_STATE_CHANGE_READY_TO_NULL:
       {
-         if ( sink->initialized )
+         GST_DEBUG("State: READY→NULL");
+         if ( sink->initialized && sink->pathInitialized )
          {
             if ( !gst_westeros_sink_backend_ready_to_null( sink, &passToDefault ) )
             {
@@ -1982,6 +2186,111 @@ static gboolean gst_westeros_sink_unlock_stop(GstBaseSink *base_sink)
    return TRUE;
 }
 
+// static bool wstDetectRawVideoFormat(GstWesterosSink *sink, GstCaps *caps)
+// {
+//    bool isRawVideo= false;
+//    if ( caps && gst_caps_get_size(caps) > 0 )
+//    {
+//       GstStructure *structure = gst_caps_get_structure(caps, 0);
+//       if ( structure )
+//       {
+//          const char *mediaType= gst_structure_get_name(structure);
+//          if ( mediaType && (g_str_has_prefix(mediaType, "video/x-raw") || g_str_has_prefix(mediaType, "video/x-westeros-raw")) )
+//          {
+//             GST_INFO("westeros-sink: detected Raw video format");
+//             isRawVideo= true;
+//          }
+//       }
+//    }
+//    sink->rawCapsDetected= isRawVideo;
+//    return isRawVideo;
+// }
+
+static WstSinkMode wstDetectSinkMode( GstCaps *caps )
+{
+   GstStructure *structure= gst_caps_get_structure( caps, 0 );
+   const gchar  *mime    = gst_structure_get_name( structure );
+
+   GST_DEBUG("wstDetectSinkMode: mime=%s", mime);
+
+   if ( (g_str_has_prefix( mime, "video/x-raw" )) || (g_str_has_prefix( mime, "video/x-westeros-raw" )) )
+   {
+      return WST_SINK_MODE_RAW;
+   }
+   return WST_SINK_MODE_ENCODED;
+}
+
+// Raw path init
+static gboolean wstInitRawPath( GstWesterosSink *sink )
+{
+   GST_DEBUG("wstInitRawPath: initializing RAW path");
+
+   gboolean result= gst_westeros_sink_raw_init( sink );
+   if ( !result )
+   {
+      GST_ERROR("wstInitRawPath: failed to init RAW SOC");
+      return FALSE;
+   }
+
+   sink->useRawMode      = TRUE;
+   sink->pathInitialized = TRUE;
+   sink->sinkMode        = WST_SINK_MODE_RAW;
+
+   GST_DEBUG("wstInitRawPath: RAW path ready");
+   return TRUE;
+}
+
+// soc path init
+static gboolean wstInitEncodedPath( GstWesterosSink *sink )
+{
+   GST_DEBUG("wstInitEncodedPath: initializing ENCODED path");
+
+   gboolean result= gst_westeros_sink_soc_init( sink );
+   sink->registry= 0;
+   sink->shell= 0;
+   sink->compositor= 0;
+   sink->surfaceId= 0;
+   sink->vpc= 0;
+   sink->vpcSurface= 0;
+   sink->output= 0;
+   if ( !result )
+   {
+      GST_ERROR("wstInitEncodedPath: failed to init encoded SOC");
+      return FALSE;
+   }
+
+   sink->useRawMode      = FALSE;
+   sink->pathInitialized = TRUE;
+   sink->sinkMode        = WST_SINK_MODE_ENCODED;
+
+   GST_DEBUG("wstInitEncodedPath: ENCODED path ready");
+   return TRUE;
+}
+
+// Teardown the current active paths: 
+static void wstTeardownCurrentPath( GstWesterosSink *sink )
+{
+   if ( !sink->pathInitialized )
+   {
+      return;
+   }
+
+   GST_DEBUG("wstTeardownCurrentPath: mode=%d", sink->sinkMode);
+
+   if ( sink->sinkMode == WST_SINK_MODE_RAW )
+   {
+      gst_westeros_sink_raw_term( sink );
+   }
+   else if ( sink->sinkMode == WST_SINK_MODE_ENCODED )
+   {
+      gst_westeros_sink_soc_term( sink );
+   }
+
+   sink->pathInitialized = FALSE;
+   sink->sinkMode        = WST_SINK_MODE_UNKNOWN;
+   sink->useRawMode      = FALSE;
+}
+
 #ifdef USE_GST1
 static gboolean gst_westeros_sink_event(GstPad *pad, GstObject *parent, GstEvent *event)
 {
@@ -2010,6 +2319,7 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
          {
             GstCaps *caps;
             gst_event_parse_caps(event, &caps);
+            GST_DEBUG("gst_westeros_sink_event: GST_EVENT_CAPS");
             GstStructure *structure = gst_caps_get_structure(caps, 0);
             if (structure)
             {
@@ -2028,6 +2338,9 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                         GstMessage *message = gst_message_new_error(GST_OBJECT_CAST(sink), error, err_string);
                         gst_element_post_message(GST_ELEMENT_CAST(sink), message);
                         g_error_free(error);
+
+                        // What to do when the caps contains height and width which exceeds the acceptable limit of the sink element ?
+
                      }
                   }
                }
@@ -2045,7 +2358,7 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                      sink->frameRate = (double)num / (double)denom;
                      if (sink->frameRate <= 0.0)
                      {
-                        g_print("westeros-sink: caps have framerate of 0 - using 60.0\n");
+                        GST_WARNING_OBJECT(sink, "Caps have framerate of 0 - using 60.0");
                         sink->frameRate = 60.0;
                      }
                   }
@@ -2057,11 +2370,110 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                wstsw_process_caps( sink, caps );
             }
             else
-            #endif
-            if ( sink->passCaps || (!sink->videoStarted && sink->startAfterCaps) )
+#endif
             {
-               gst_westeros_sink_soc_accept_caps( sink, caps );
+               // Detect which path to use
+               WstSinkMode detectedMode= wstDetectSinkMode( caps );
+               // Lock the sink while comparing and switching paths
+               LOCK( sink );
+
+               if ( detectedMode != sink->sinkMode )
+               {
+                  // Teardown old path if switching
+                  if ( sink->pathInitialized )
+                  {
+                     GST_DEBUG("Switching path: old=%d new=%d",
+                              sink->sinkMode, detectedMode);
+                     wstTeardownCurrentPath( sink );
+                  }
+
+                  // Init the detected path:
+                  if ( detectedMode == WST_SINK_MODE_RAW )
+                  {
+                     result= wstInitRawPath( sink );
+                  }
+                  else
+                  {
+                     result= wstInitEncodedPath( sink );
+                  }
+               }
+
+               // Accept caps based on the current active path:
+               if ( result )
+               {
+                  if ( sink->useRawMode )
+                  {
+                     GST_DEBUG("gst_westeros_sink_accept_caps: dispatching to raw accept_caps");
+                     result= gst_westeros_sink_raw_accept_caps( sink, caps );
+                  }
+                  else
+                  {
+                     GST_DEBUG("gst_westeros_sink_accept_caps: dispatching to soc accept_caps");
+                     result= gst_westeros_sink_soc_accept_caps( sink, caps );
+                  }
+               }
+               UNLOCK( sink );
+
+#if 0
+bool isRaw = wstDetectRawVideoFormat(sink, caps);
+
+if ( isRaw != sink->isRawVideoMode)
+{
+   if ( sink->socInited )
+   {
+      gst_westeros_sink_soc_term( sink );
+      sink->socInited= FALSE;
+   }
+
+   if ( isRaw && !sink->rawInited )
+   {
+      if ( gst_westeros_sink_raw_init(sink) )
+      {
+         GST_INFO_OBJECT(sink, "westeros_sink_raw_init: raw backend initialized");
+         sink->rawInited= TRUE;
+         // If(gst_westeros_sink_raw_accept_caps(sink, caps))
+         // {
+         //    GST_INFO_OBJECT(sink, "GST_EVENT_CAPS: raw_accept_caps succeeded");
+         //    sink->isRawVideoMode= TRUE;
+         //    GST_INFO_OBJECT(sink, "GST_EVENT_CAPS: committed to RAW mode");
+         // }          
+      }
+   }
+   else {
+      // SOC default path
+      sink->isRawVideoMode= FALSE;
+      gst_westeros_sink_soc_init( sink );
+      sink->socInited= TRUE;
+      // if ( !gst_westeros_sink_soc_accept_caps(sink, caps) )
+      // {
+      //    GST_ERROR_OBJECT(sink, "GST_EVENT_CAPS: soc_accept_caps failed");
+      // }
+      // else
+      // {
+      //    GST_INFO_OBJECT(sink, "GST_EVENT_CAPS: committed to SoC mode");
+      // }
+   }
+}
+
+//           ├─> If (!sink->sinkSocInitialized && sink->soc_init):
+
+// else
+{
+   if ( sink->isRawVideoMode )
+   {
+      gst_westeros_sink_raw_accept_caps(sink, caps);
+      GST_INFO_OBJECT(sink, "GST_EVENT_CAPS: raw_accept_caps succeeded");
+   }
+   else
+   {
+      gst_westeros_sink_soc_accept_caps(sink, caps);
+      GST_info_object(sink, "GST_EVENT_CAPS: soc_accept_caps succeeded");
+   }
+}
+#endif
+
             }
+            passToDefault= TRUE;
          }
          break;
       case GST_EVENT_FLUSH_START:
@@ -2072,7 +2484,14 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
          UNLOCK( sink );
          timeCodeFlush( sink );
          sinkStatsLogReset( sink );
-         gst_westeros_sink_soc_flush( sink );
+         if ( sink->useRawMode )
+         {
+            GST_DEBUG("gst_westeros_sink_flush_start: invoking raw flush");
+            gst_westeros_sink_raw_flush( sink );
+         } else {
+            GST_DEBUG("gst_westeros_sink_flush_start: invoking soc flush");
+            gst_westeros_sink_soc_flush( sink );
+         }
          passToDefault= TRUE;
          break;
 
@@ -2111,7 +2530,16 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             }
             else
             {
-               gst_westeros_sink_soc_eos_event( sink );
+               if ( sink->useRawMode )
+               {
+                  GST_DEBUG("gst_westeros_sink_event: GST_EVENT_EOS: invoking raw eos event");
+                  gst_westeros_sink_raw_eos_event( sink );
+               }
+               else
+               {
+                  GST_DEBUG("gst_westeros_sink_event: GST_EVENT_EOS: invoking soc eos event");
+                  gst_westeros_sink_soc_eos_event( sink );
+               }
             }
          }
          break;
@@ -2158,7 +2586,9 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             
             LOCK( sink );
             playbackRateChanged= sink->playbackRate != playbackRate;
-            sink->currentSegment = dataSegment;
+            #ifdef USE_GST1
+            sink->currentSegment = &sink->segment;
+            #endif
             sink->flushStarted= FALSE;
             sink->playbackRate= playbackRate;
             sink->position= 0;
@@ -2201,7 +2631,14 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                   sink->position= GST_TIME_AS_NSECONDS(segmentPosition);
                   sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentPosition);
                }
-               gst_westeros_sink_soc_set_startPTS( sink, sink->startPTS );
+               if ( sink->useRawMode )
+               {
+                  GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: GST_EVENT_SEGMENT: invoking raw set_startPTS");
+                  gst_westeros_sink_raw_set_startPTS( sink, sink->startPTS );
+               } else {
+                  GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: GST_EVENT_SEGMENT: invoking soc set_startPTS");
+                  gst_westeros_sink_soc_set_startPTS( sink, sink->startPTS );
+               }
             }
             UNLOCK( sink );
 
@@ -2234,6 +2671,7 @@ done:
    return result;
 }
 
+
 #ifdef USE_GST1
 static gboolean gst_westeros_sink_sink_query(GstPad *pad, GstObject *parent, GstQuery *query)
 {
@@ -2246,7 +2684,14 @@ static gboolean gst_westeros_sink_sink_query(GstPad *pad, GstQuery *query)
 
    gboolean rv = FALSE;
 
-   rv = gst_westeros_sink_soc_query(sink, query);
+   if ( sink->useRawMode )
+   {
+      GST_DEBUG("gst_westeros_sink_query: invoke raw query");
+      rv = gst_westeros_sink_raw_query(sink, query);
+   } else {
+      GST_DEBUG("gst_westeros_sink_query: invoke soc query");
+      rv = gst_westeros_sink_soc_query(sink, query);
+   }
 
    if (rv == FALSE)
    {
@@ -2262,8 +2707,8 @@ static gboolean gst_westeros_sink_sink_query(GstPad *pad, GstQuery *query)
 
 static gboolean gst_westeros_sink_check_caps(GstWesterosSink *sink, GstPad *peer)
 {
+   GST_DEBUG("gst_westeros_sink_check_caps: enter");
    WESTEROS_UNUSED(sink);
-
    gboolean result= TRUE;
    GstCaps* caps= NULL;
 
@@ -2273,15 +2718,9 @@ static gboolean gst_westeros_sink_check_caps(GstWesterosSink *sink, GstPad *peer
    caps= gst_pad_get_caps(peer);
 #endif
   
-   if (gst_caps_get_size(caps) == 0)
+   if ( gst_caps_get_size(caps) == 0)
    {
       result= TRUE;
-      goto exit;
-   }
-
-   if ( !gst_westeros_sink_soc_accept_caps( sink, caps ) )  
-   {
-      result= FALSE;
       goto exit;
    }
 
@@ -2317,9 +2756,22 @@ static GstPadLinkReturn gst_westeros_sink_link(GstPad *pad, GstPad *peer)
    if ( sink->startAfterLink )
    {
       sink->startAfterLink= FALSE;
-      if ( !gst_westeros_sink_soc_start_video( sink ) )
+
+      if ( sink->useRawMode )
       {
-         GST_ERROR("gst_westeros_sink_link: gst_westeros_sink_sock_start_video failed");
+         GST_INFO_OBJECT(sink, "gst_westeros_sink_link: Starting raw video mode");
+         if ( !gst_westeros_sink_raw_start_video( sink ) )
+         {
+            GST_ERROR("gst_westeros_sink_link: gst_westeros_sink_raw_start_video failed");
+         }
+      }
+      else
+      {
+         GST_INFO_OBJECT(sink, "gst_westeros_sink_link: Starting SOC video mode");
+         if ( !gst_westeros_sink_soc_start_video(sink) )
+         {
+            GST_ERROR("gst_westeros_sink_link: gst_westeros_sink_soc_start_video failed");
+         }
       }
    }
 
@@ -2345,6 +2797,7 @@ static void gst_westeros_sink_unlink(GstPad *pad)
 
 static GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer *buffer)
 {  
+   GST_DEBUG("gst_westeros_sink_render: enter");
    GstWesterosSink *sink= GST_WESTEROS_SINK(base_sink);
    
    LOCK( sink );
@@ -2365,8 +2818,20 @@ static GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer 
       }
    }
    #endif
-
-   gst_westeros_sink_soc_render( sink, buffer );
+   // Path should be initialized before rendering
+   if ( !sink->pathInitialized )
+   {
+      GST_ERROR("gst_westeros_sink_render: path not initialized!");
+      return GST_FLOW_ERROR;
+   }
+   else if ( sink->useRawMode )
+   {
+      GST_DEBUG("gst_westeros_sink_render: invoking sink raw render");
+      gst_westeros_sink_raw_render( sink, buffer );
+   } else {
+      GST_DEBUG("gst_westeros_sink_render: invoking sink soc render");
+      gst_westeros_sink_soc_render( sink, buffer );
+   }
 
    return GST_FLOW_OK;
 }
@@ -2417,14 +2882,12 @@ void gst_westeros_sink_eos_detected( GstWesterosSink *sink )
 
 static gboolean westeros_sink_init (GstPlugin * plugin)
 {
+   GST_DEBUG("westeros_sink_init: ELEMENT_REGISTER");
+   gboolean result= FALSE;
    return gst_element_register (plugin,
-                                #ifdef USE_RAW_SINK
-                                "westerosrawsink",
-                                #else
                                 "westerossink",
-                                #endif
                                 GST_RANK_PRIMARY,
-                                gst_westeros_sink_get_type ());
+                                GST_TYPE_WESTEROS_SINK );
 }
 
 #ifndef PACKAGE
