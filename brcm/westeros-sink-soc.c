@@ -687,7 +687,7 @@ static void streamChangedCallback(void * context, int param)
          #ifdef ENABLE_DOLBYVISION
          #if (NEXUS_PLATFORM_VERSION_MAJOR >= 19)
         /* SDK 19.x introduced Dolby Vision Low Latency so the enums changed */
-         dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eDolbyVisionSourceLed;
+         dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eDolbyVisionSinkLed;
          #else
          dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eDolbyVision;
          #endif
@@ -721,7 +721,7 @@ static void streamChangedCallback(void * context, int param)
    #ifdef ENABLE_DOLBYVISION
    #if (NEXUS_PLATFORM_VERSION_MAJOR >= 19)
    /* SDK 19.x introduced Dolby Vision Low Latency so the enums changed */
-   if(dynamicRangeMode == NEXUS_VideoDynamicRangeMode_eDolbyVisionSourceLed && IsDbvUnsupportedFormat())
+   if(dynamicRangeMode == NEXUS_VideoDynamicRangeMode_eDolbyVisionSinkLed && IsDbvUnsupportedFormat())
    #else
    if(dynamicRangeMode == NEXUS_VideoDynamicRangeMode_eDolbyVision && IsDbvUnsupportedFormat())
    #endif
