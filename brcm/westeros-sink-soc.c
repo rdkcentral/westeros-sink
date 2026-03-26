@@ -937,6 +937,12 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->acquireResources= sinkAcquireVideo;
    sink->releaseResources= sinkReleaseVideo;
 
+   /*
+    * Use segment.position as the reporting base so splice/ad insertion
+    * timelines stay monotonic when the segment start resets.
+    */
+   sink->useSegmentPosition= TRUE;
+
    rc= NxClient_Join(NULL);
    if ( rc == NEXUS_SUCCESS )
    {

@@ -276,6 +276,28 @@ static gint64 nanoTimeToPTS(gint64 nanoTime)
    return (gint64)(pts + remainder);
 }
 
+static gint64 ptsToNanoTime(gint64 pts)
+{
+   return ((pts/90LL)*GST_MSECOND)+((pts%90LL)*GST_MSECOND/90LL);
+}
+
+static gint64 getPositionUpdateFloorNano(GstWesterosSink *sink)
+{
+   gint64 firstNano= ptsToNanoTime(sink->firstPTS);
+   gint64 floorNano= sink->segment.start;
+
+   if ( sink->positionSegmentStart > floorNano )
+   {
+      floorNano= sink->positionSegmentStart;
+   }
+   if ( firstNano > floorNano )
+   {
+      floorNano= firstNano;
+   }
+
+   return floorNano;
+}
+
 static long long getCurrentTimeMillis(void)
 {
    struct timeval tv;
@@ -2106,8 +2128,14 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
 
 void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 {
-   WESTEROS_UNUSED(sink);
    WESTEROS_UNUSED(pts);
+
+   /*
+    * Seed firstPTS from the active segment base immediately so late status
+    * updates from the previous segment cannot be applied before the first
+    * input buffer for the new segment arrives.
+    */
+   sink->firstPTS= nanoTimeToPTS(sink->positionSegmentStart);
 }
 
 void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
@@ -5509,21 +5537,25 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                            if ( frameTime != -1LL )
                            {
                               gint64 currentNano= frameTime*1000LL;
+                              gint64 firstNano= ptsToNanoTime(sink->firstPTS);
+                              gint64 floorNano= getPositionUpdateFloorNano(sink);
 
                               /*
-                               * Prevent stale frameTime from corrupting position during seeks.
-                               * During seek operations, old frameTime messages can arrive after
-                               * the segment boundary has been updated, causing position corruption.
-                               * Filter out frameTime values that predate the current segment start.
+                               * Prevent stale frameTime from corrupting position during seeks
+                               * and segment-position changes such as ad insertion. Old status
+                               * messages can arrive after the new segment base is active.
                                */
-                              if ( frameTime < sink->segment.start/1000LL )
+                              if ( currentNano < floorNano )
                               {
                                  /* 
-                                  * Frame time is stale. Do not use this to calculate position. Any new segment will have already initialized the position value
-                                  * to segment start anyway. Skip time code handling as well, as it's directly linked to the PTS. 
+                                  * Frame time is stale. Do not use this to calculate position.
+                                  * Any new segment will have already initialized the position
+                                  * value to the active segment base. Skip time code handling as
+                                  * well, as it's directly linked to the PTS.
                                   * Continue to update frameDisplayCount and first frame signal as usual
                                   */
-                                 GST_DEBUG("Stale frameTime: %lld μs before segment start: %lld μs. Skip position update.", frameTime, sink->segment.start/1000LL);
+                                 GST_DEBUG("Stale frameTime: %lld ns before update floor: %lld ns (segment start %lld ns, position base %lld ns, firstPTS %lld ns). Skip position update.",
+                                           currentNano, floorNano, sink->segment.start, sink->positionSegmentStart, firstNano);
                                  if (sink->soc.frameOutCount > 0 ) // Note: same pattern of condition checks as the happy-path a few code blocks below.
                                  {
                                     if (sink->soc.frameDisplayCount == 0)
@@ -5536,7 +5568,6 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                               }
 
                               /* Position calculation for valid (non-stale) frameTime only */
-                              gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
                               sink->position= sink->positionSegmentStart + currentNano - firstNano;
                               sink->currentPTS = nanoTimeToPTS(currentNano);
 
@@ -7314,13 +7345,23 @@ capture_start:
             if ( !sink->soc.conn )
             {
                /* If we are not connected to a video server, set position here */
-               gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
-               sink->position= sink->positionSegmentStart + frameTime - firstNano;
-               sink->currentPTS = nanoTimeToPTS(frameTime);
+               gint64 firstNano= ptsToNanoTime(sink->firstPTS);
+               gint64 floorNano= getPositionUpdateFloorNano(sink);
 
-               if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
+               if ( frameTime >= floorNano )
                {
-                  sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
+                  sink->position= sink->positionSegmentStart + frameTime - firstNano;
+                  sink->currentPTS = nanoTimeToPTS(frameTime);
+
+                  if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
+                  {
+                     sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
+                  }
+               }
+               else
+               {
+                  GST_DEBUG("Stale decoded frameTime: %lld ns before update floor: %lld ns (segment start %lld ns, position base %lld ns, firstPTS %lld ns). Skip position update.",
+                            frameTime, floorNano, sink->segment.start, sink->positionSegmentStart, firstNano);
                }
             }
 
