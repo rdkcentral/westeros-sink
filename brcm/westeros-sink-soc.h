@@ -158,6 +158,14 @@ struct _GstWesterosSinkSoc
 
    struct wl_sb *sb;
    int activeBuffers;
+
+   int hdrSwitchState;
+   #if ((NEXUS_PLATFORM_VERSION_MAJOR >= 18) || (NEXUS_PLATFORM_VERSION_MAJOR >= 17 && NEXUS_PLATFORM_VERSION_MINOR >= 3))
+   NEXUS_VideoEotf hdrSwitchTargetEotf;
+   #endif
+   long long hdrSwitchTimestamp;
+   int hdrTvSettleMs;
+   gboolean hdrWaitPlayForTv;   /* stall playback until TV is ready for HDR10, this won't be perfect since we don't really know if the TV is ready for HDR10 */
 };
 
 void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass);

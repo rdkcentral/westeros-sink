@@ -38,6 +38,15 @@
 #include "bmedia_types.h"
 
 #define FRAME_POLL_TIME (8000)
+
+#define HDR_SWITCH_IDLE           0    /* SDR->HDR10 state machine states */
+#define HDR_SWITCH_WAIT_DISPLAY   1    /* waiting for first frame displayed */
+#define HDR_SWITCH_WAIT_EOTF      2    /* waiting for nexus output HDMI eotf to match stream eotf */
+#define HDR_SWITCH_WAIT_TV_SETTLE 3    /* waiting for TV to settle after SDR->HDR10HDMI switch */
+#define HDR_EOTF_TIMEOUT_MS       100  /* timeout for HDMI eotf to match stream eotf , normally ~10ms */
+#define HDR_TV_SETTLE_MS          250  /* timeout for TV to at least start the transition to HDR10.  This was determined empirically. ~150 on the LG we tested */
+#define HDR_DISPLAY_TIMEOUT_MS    1000 /* timeout from playing state to first frame displayed (which starts the transition to HDR10).  Can take a while if there is a start segment PTS offset and stc has to jump.. */
+
 #define EOS_DETECT_DELAY (1500000)
 #define DEFAULT_CAPTURE_WIDTH (1280)
 #define DEFAULT_CAPTURE_HEIGHT (720)
@@ -150,6 +159,7 @@ static void postErrorMessage( GstWesterosSink *sink, int errorCode, const char *
 static gpointer captureThread(gpointer data);
 static void processFrame( GstWesterosSink *sink );
 static void updateVideoStatus( GstWesterosSink *sink );
+static void updateHdrModeSwitch( GstWesterosSink *sink);
 static void firstPtsCallback( void *userData, int n );
 static void underflowCallback( void *userData, int n );
 static void ptsErrorCallback( void *userData, int n );
@@ -697,6 +707,9 @@ static void streamChangedCallback(void * context, int param)
       case NEXUS_VideoDecoderDynamicRangeMetadataType_eTechnicolorPrime:
          GST_WARNING(" Technicolor Prime content decoding begins.");
          break;
+      case NEXUS_VideoDecoderDynamicRangeMetadataType_eHdr10Plus:
+         GST_WARNING(" HDR10+ content decoding begins.");
+         break;
       case NEXUS_VideoDecoderDynamicRangeMetadataType_eNone:
       default:
          switch (streamInfo.eotf)
@@ -753,6 +766,32 @@ static void streamChangedCallback(void * context, int param)
          {
             GST_WARNING("unable to set display format using NxClient_SetDisplaySettings (%d)...", rc);
             return;
+         }
+      }
+   }
+   /* eTrackInput leaves dynamicRangeMode unchanged but the HDMI output may still need an SDR->HDR switch */
+   else if (dynamicRangeMode == NEXUS_VideoDynamicRangeMode_eTrackInput &&
+            streamInfo.eotf != NEXUS_VideoEotf_eSdr &&
+            sink->soc.videoWindow)
+   {
+      NEXUS_HdmiOutputHandle aliasedHdmi= NEXUS_HdmiOutput_Open(NEXUS_ALIAS_ID + 0, NULL);
+      if (aliasedHdmi)
+      {
+         NEXUS_HdmiOutputStatus hdmiStatus;
+         NEXUS_HdmiOutput_GetStatus(aliasedHdmi, &hdmiStatus);
+         NEXUS_HdmiOutput_Close(aliasedHdmi);
+         if (hdmiStatus.eotf != streamInfo.eotf)
+         {
+            NEXUS_SurfaceClientSettings vClientSettings;
+            NEXUS_SurfaceClient_GetSettings(sink->soc.videoWindow, &vClientSettings);
+            vClientSettings.composition.visible= false;
+            NEXUS_SurfaceClient_SetSettings(sink->soc.videoWindow, &vClientSettings);
+
+            sink->soc.hdrSwitchTargetEotf= streamInfo.eotf;
+            sink->soc.hdrSwitchTimestamp= getCurrentTimeMillis();
+            sink->soc.hdrSwitchState= HDR_SWITCH_WAIT_DISPLAY;
+            GST_INFO("streamChangedCallback: HDMI eotf=%d != stream eotf=%d, hiding video for mode switch",
+                        hdmiStatus.eotf, streamInfo.eotf);
          }
       }
    }
@@ -917,6 +956,29 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
       }
    }
    #endif
+
+   sink->soc.hdrSwitchState= HDR_SWITCH_IDLE;
+   sink->soc.hdrSwitchTimestamp= 0;
+   sink->soc.hdrTvSettleMs= HDR_TV_SETTLE_MS;
+   {
+      const char *env= getenv("WESTEROS_SINK_HDR_TV_SETTLE_MS");
+      if ( env )
+      {
+         /* use this to override the default TV settle time, in case we find TVs that take longer than the default */
+         sink->soc.hdrTvSettleMs= atoi(env);
+         GST_INFO("hdrTvSettleMs override: %d", sink->soc.hdrTvSettleMs);
+      }
+   }
+   sink->soc.hdrWaitPlayForTv= FALSE;
+   {
+      const char *env= getenv("WESTEROS_SINK_HDR_WAIT_PLAY_FOR_TV");
+      if ( env && (atoi(env) != 0) )
+      {
+         /* stall playback until TV is ready for HDR10, this won't be perfect since we don't really know if the TV is ready for HDR10 */
+         sink->soc.hdrWaitPlayForTv= TRUE;
+         GST_INFO("hdrWaitPlayForTv enabled");
+      }
+   }
 
    sink->soc.disableSourceFollow= FALSE;
    {
@@ -1822,6 +1884,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.presentationStarted= FALSE;
    sink->soc.lastStartPts45k= 0;
+   sink->soc.hdrSwitchState= HDR_SWITCH_IDLE;
    UNLOCK(sink);
 
 
@@ -2589,6 +2652,11 @@ static gpointer captureThread(gpointer data)
 
       updateVideoStatus( sink );
 
+      if ( sink->soc.hdrSwitchState != HDR_SWITCH_IDLE )
+      {
+         updateHdrModeSwitch( sink );
+      }
+
    end_loop:
 
       if ( sink->display && sink->queue && wl_display_dispatch_queue_pending(sink->display, sink->queue) == 0 )
@@ -2850,6 +2918,108 @@ static void processFrame( GstWesterosSink *sink )
    }
 
    GST_LOG("processFrame: exit");
+}
+
+static void updateHdrModeSwitch( GstWesterosSink *sink )
+{
+#if (NEXUS_PLATFORM_VERSION_MAJOR > 17) || ((NEXUS_PLATFORM_VERSION_MAJOR == 17) && (NEXUS_PLATFORM_VERSION_MINOR > 1))
+#if defined (ENABLE_DOLBYVISION) || defined (ENABLE_HDR10)
+
+   if ( sink->soc.hdrSwitchState == HDR_SWITCH_IDLE )
+   {
+      return;
+   }
+
+   long long now= getCurrentTimeMillis();
+   long long elapsed= now - sink->soc.hdrSwitchTimestamp;
+
+   switch ( sink->soc.hdrSwitchState )
+   {
+      case HDR_SWITCH_WAIT_DISPLAY:
+      {
+         if ( !sink->soc.videoPlaying )
+         {
+            sink->soc.hdrSwitchTimestamp= now;
+         }
+
+         NEXUS_VideoDecoderStatus status;
+         gboolean gotStatus= (NEXUS_SUCCESS == NEXUS_SimpleVideoDecoder_GetStatus(sink->soc.videoDecoder, &status));
+         if ( (gotStatus && status.numDisplayed > 0) || elapsed >= HDR_DISPLAY_TIMEOUT_MS )
+         {
+            if ( gotStatus && status.numDisplayed > 0 )
+               GST_INFO("hdrModeSwitch: first frame displayed after %lldms (decoded=%u displayed=%u)", elapsed, status.numDecoded, status.numDisplayed);
+            else
+               GST_WARNING("hdrModeSwitch: timed out waiting for first display (%lldms), advancing", elapsed);
+
+            if ( sink->soc.hdrWaitPlayForTv && sink->soc.stcChannel )
+            {
+               NEXUS_SimpleStcChannel_Freeze(sink->soc.stcChannel, TRUE);
+               GST_INFO("hdrModeSwitch: STC frozen");
+            }
+            sink->soc.hdrSwitchTimestamp= now;
+            sink->soc.hdrSwitchState= HDR_SWITCH_WAIT_EOTF;
+         }
+         break;
+      }
+      case HDR_SWITCH_WAIT_EOTF:
+      {
+         gboolean advance= FALSE;
+         if (elapsed >= HDR_EOTF_TIMEOUT_MS)
+         {
+            GST_WARNING("hdrModeSwitch: EOTF timeout after %lldms, advancing", elapsed);
+            advance= TRUE;
+         }
+         else
+         {
+            NEXUS_HdmiOutputHandle aliasedHdmi= NEXUS_HdmiOutput_Open(NEXUS_ALIAS_ID + 0, NULL);
+            if ( aliasedHdmi )
+            {
+               NEXUS_HdmiOutputStatus hdmiStatus;
+               NEXUS_HdmiOutput_GetStatus(aliasedHdmi, &hdmiStatus);
+               NEXUS_HdmiOutput_Close(aliasedHdmi);
+               if ( hdmiStatus.eotf == sink->soc.hdrSwitchTargetEotf )
+               {
+                  GST_INFO("hdrModeSwitch: HDMI eotf matched (%d) after %lldms", hdmiStatus.eotf, elapsed);
+                  advance= TRUE;
+               }
+            }
+            else
+            {
+               GST_WARNING("hdrModeSwitch: NEXUS_HdmiOutput_Open failed, advancing");
+               advance= TRUE;
+            }
+         }
+         if ( advance )
+         {
+            sink->soc.hdrSwitchTimestamp= now;
+            sink->soc.hdrSwitchState= HDR_SWITCH_WAIT_TV_SETTLE;
+         }
+         break;
+      }
+      case HDR_SWITCH_WAIT_TV_SETTLE:
+      {
+         if ( elapsed >= sink->soc.hdrTvSettleMs )
+         {
+            if ( sink->soc.hdrWaitPlayForTv && sink->soc.stcChannel )
+            {
+               NEXUS_SimpleStcChannel_Freeze(sink->soc.stcChannel, FALSE);
+               GST_INFO("hdrModeSwitch: STC unfrozen");
+            }
+            if ( sink->soc.videoWindow )
+            {
+               NEXUS_SurfaceClientSettings vClientSettings;
+               NEXUS_SurfaceClient_GetSettings(sink->soc.videoWindow, &vClientSettings);
+               vClientSettings.composition.visible= sink->visible;
+               NEXUS_SurfaceClient_SetSettings(sink->soc.videoWindow, &vClientSettings);
+            }
+            GST_INFO("hdrModeSwitch: restored video after %lldms TV settle", elapsed);
+            sink->soc.hdrSwitchState= HDR_SWITCH_IDLE;
+         }
+         break;
+      }
+   }
+#endif
+#endif
 }
 
 static void updateVideoStatus( GstWesterosSink *sink )
@@ -3127,7 +3297,7 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
       sendVideoFormatChgMsg(sink);
    }
 
-   if ( sink->soc.videoWindow )
+   if ( sink->soc.videoWindow && sink->soc.hdrSwitchState == HDR_SWITCH_IDLE )
    {
       NEXUS_SurfaceClient_GetSettings( sink->soc.videoWindow, &vClientSettings );
       if ( vClientSettings.composition.visible != sink->visible )
