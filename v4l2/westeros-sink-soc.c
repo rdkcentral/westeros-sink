@@ -1063,6 +1063,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevFramePTSGfx= 0;
    sink->soc.isSourceDTV= FALSE;
    sink->soc.startedOutOfSegment= FALSE;
+   sink->soc.serverSegmentSyncPending= TRUE;
    sink->soc.videoX= sink->windowX;
    sink->soc.videoY= sink->windowY;
    sink->soc.videoWidth= sink->windowWidth;
@@ -2498,6 +2499,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    sink->soc.startedOutOfSegment= FALSE;
+   sink->soc.serverSegmentSyncPending= TRUE;
    wstFlushPixelAspectRatio( sink, false );
    #ifdef USE_GST_AFD
    wstFlushAFDInfo( sink, false );
@@ -5509,35 +5511,76 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                            if ( frameTime != -1LL )
                            {
                               gint64 currentNano= frameTime*1000LL;
+                              gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
+                              gint64 position= sink->positionSegmentStart + currentNano - firstNano;
 
                               /*
-                               * Prevent stale frameTime from corrupting position during seeks.
-                               * During seek operations, old frameTime messages can arrive after
-                               * the segment boundary has been updated, causing position corruption.
-                               * Filter out frameTime values that predate the current segment start.
+                               * Two-stage seek guard:
+                               *
+                               * Stage 1 – Race window: the segment event already moved
+                               * positionSegmentStart to the seek target, but the render path
+                               * has not yet latched the first in-segment buffer PTS into
+                               * firstPTS (prevPositionSegmentStart still differs from
+                               * positionSegmentStart).  firstNano is therefore stale and the
+                               * computed position would be wrong.  Keep position stable at the
+                               * segment-event value until firstPTS is refreshed.
+                               *
+                               * Stage 2 – Server display-pipeline latency: after a backward
+                               * seek the video server continues to report the frame it is
+                               * currently showing (from the old, higher timestamp) until its
+                               * display pipeline drains – typically one or two frame periods.
+                               * The computed position would jump far above positionSegmentStart
+                               * and then snap back, causing a visible backward jump.  Reject
+                               * any frame whose position is more than 3 s ahead of
+                               * positionSegmentStart; once a frame within that window is seen
+                               * the server has transitioned and the gate is permanently opened.
                                */
-                              if ( frameTime < sink->segment.start/1000LL )
+                              if ( sink->soc.serverSegmentSyncPending )
                               {
-                                 /* 
-                                  * Frame time is stale. Do not use this to calculate position. Any new segment will have already initialized the position value
-                                  * to segment start anyway. Skip time code handling as well, as it's directly linked to the PTS. 
-                                  * Continue to update frameDisplayCount and first frame signal as usual
-                                  */
-                                 GST_DEBUG("Stale frameTime: %lld μs before segment start: %lld μs. Skip position update.", frameTime, sink->segment.start/1000LL);
-                                 if (sink->soc.frameOutCount > 0 ) // Note: same pattern of condition checks as the happy-path a few code blocks below.
+                                 if ( sink->prevPositionSegmentStart != sink->positionSegmentStart )
                                  {
-                                    if (sink->soc.frameDisplayCount == 0)
+                                    GST_DEBUG("Seek race window: firstPTS not refreshed (prevSegStart %lld segStart %lld) – skip",
+                                              sink->prevPositionSegmentStart, sink->positionSegmentStart);
+                                    if ( sink->soc.frameOutCount > 0 )
                                     {
-                                       sink->soc.emitFirstFrameSignal= TRUE;
+                                       if ( sink->soc.frameDisplayCount == 0 )
+                                          sink->soc.emitFirstFrameSignal= TRUE;
+                                       ++sink->soc.frameDisplayCount;
                                     }
+                                    break;
+                                 }
+                                 if ( position > sink->positionSegmentStart + 3000000000LL )
+                                 {
+                                    GST_DEBUG("Server segment sync: position %lld >3s above base %lld – server still showing old content, skip",
+                                              position, sink->positionSegmentStart);
+                                    if ( sink->soc.frameOutCount > 0 )
+                                    {
+                                       if ( sink->soc.frameDisplayCount == 0 )
+                                          sink->soc.emitFirstFrameSignal= TRUE;
+                                       ++sink->soc.frameDisplayCount;
+                                    }
+                                    break;
+                                 }
+                                 /* First frame consistent with the new segment – open the gate */
+                                 sink->soc.serverSegmentSyncPending= FALSE;
+                              }
+
+                              /* Also reject frames that fall below the segment base */
+                              if ( position < sink->positionSegmentStart )
+                              {
+                                 GST_DEBUG("Pre-segment frameTime: position %lld below segment base %lld – skip",
+                                           position, sink->positionSegmentStart);
+                                 if ( sink->soc.frameOutCount > 0 )
+                                 {
+                                    if ( sink->soc.frameDisplayCount == 0 )
+                                       sink->soc.emitFirstFrameSignal= TRUE;
                                     ++sink->soc.frameDisplayCount;
                                  }
-                                 break;  /* Early exit - no position calculation for stale frameTime.  */
+                                 break;
                               }
 
                               /* Position calculation for valid (non-stale) frameTime only */
-                              gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
-                              sink->position= sink->positionSegmentStart + currentNano - firstNano;
+                              sink->position= position;
                               sink->currentPTS = nanoTimeToPTS(currentNano);
 
                               GST_DEBUG("receive frameTime: %lld position %lld PTS %lld", currentNano, sink->position, sink->currentPTS);
@@ -7313,14 +7356,49 @@ capture_start:
 
             if ( !sink->soc.conn )
             {
-               /* If we are not connected to a video server, set position here */
+               /* If we are not connected to a video server, set position here.
+                * Apply the same two-stage seek guard used in the server path:
+                * hold off while firstPTS is stale (race window), and reject
+                * decoded output frames that are more than 3 s beyond
+                * positionSegmentStart (stale decoder buffer after backward seek). */
                gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
-               sink->position= sink->positionSegmentStart + frameTime - firstNano;
-               sink->currentPTS = nanoTimeToPTS(frameTime);
+               gint64 candidatePosition= sink->positionSegmentStart + frameTime - firstNano;
+               gboolean skipPositionUpdate= FALSE;
 
-               if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
+               if ( sink->soc.serverSegmentSyncPending )
                {
-                  sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
+                  if ( sink->prevPositionSegmentStart != sink->positionSegmentStart )
+                  {
+                     GST_DEBUG("No-server seek race window: firstPTS stale – skip position update");
+                     skipPositionUpdate= TRUE;
+                  }
+                  else if ( candidatePosition > sink->positionSegmentStart + 3000000000LL )
+                  {
+                     GST_DEBUG("No-server segment sync: candidate %lld >3s above base %lld – skip",
+                               candidatePosition, sink->positionSegmentStart);
+                     skipPositionUpdate= TRUE;
+                  }
+                  else
+                  {
+                     sink->soc.serverSegmentSyncPending= FALSE;
+                  }
+               }
+               else if ( candidatePosition < sink->positionSegmentStart )
+               {
+                  GST_DEBUG("No-server pre-segment frame: candidate %lld below base %lld – skip",
+                            candidatePosition, sink->positionSegmentStart);
+                  skipPositionUpdate= TRUE;
+               }
+
+               if ( !skipPositionUpdate )
+               {
+                  sink->position= candidatePosition;
+                  sink->currentPTS = nanoTimeToPTS(frameTime);
+
+                  if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
+                  {
+                     sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
+                  }
                }
             }
 

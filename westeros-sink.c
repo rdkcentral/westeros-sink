@@ -1304,6 +1304,8 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    sink->segment.start= -1LL;
    sink->segmentNumber= 0;
    sink->queryPositionFromPeer= FALSE;
+   sink->segmentFromSeek= FALSE;
+   sink->segmentSeekTarget= GST_CLOCK_TIME_NONE;
    sink->useSegmentPosition= FALSE;
 
    sink->displayName= 0;
@@ -1941,6 +1943,27 @@ static gboolean gst_westeros_sink_send_event(GstElement *element, GstEvent *even
 
    GST_LOG_OBJECT(sink,"event %s",GST_EVENT_TYPE_NAME(event));
 
+   if ( GST_EVENT_TYPE(event) == GST_EVENT_SEEK )
+   {
+      gdouble rate;
+      GstFormat format;
+      GstSeekFlags flags;
+      GstSeekType startType;
+      GstSeekType stopType;
+      gint64 start;
+      gint64 stop;
+
+      gst_event_parse_seek( event, &rate, &format, &flags, &startType, &start, &stopType, &stop );
+
+      LOCK( sink );
+      sink->segmentFromSeek= (format == GST_FORMAT_TIME);
+      sink->segmentSeekTarget= ((format == GST_FORMAT_TIME) && (startType != GST_SEEK_TYPE_NONE)) ? start : GST_CLOCK_TIME_NONE;
+      UNLOCK( sink );
+
+      GST_DEBUG_OBJECT(sink, "record seek event: rate %f startType %d start %" G_GINT64_FORMAT,
+                       rate, startType, start);
+   }
+
    if ( sink->processSendEvent )
    {
       result= sink->processSendEvent( sink, event, &passToDefault );
@@ -2157,10 +2180,30 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
 
             
             LOCK( sink );
+                        gint64 prevPosition= sink->position;
+                        gint64 prevPositionSegmentStart= sink->positionSegmentStart;
+                        gboolean segmentFromSeek= sink->segmentFromSeek;
+                        gboolean preserveContinuousPosition= FALSE;
+                        gint64 continuousPositionBase= 0;
+
+                        if ( (segmentFormat == GST_FORMAT_TIME) &&
+                             !segmentFromSeek &&
+                             (segmentStart == 0) &&
+                             (segmentPosition == 0) &&
+                             (prevPosition != GST_CLOCK_TIME_NONE) &&
+                             (prevPosition > GST_SECOND) &&
+                             (prevPositionSegmentStart > 0) )
+                        {
+                           preserveContinuousPosition= TRUE;
+                           continuousPositionBase= prevPosition;
+                        }
+
             playbackRateChanged= sink->playbackRate != playbackRate;
             sink->currentSegment = dataSegment;
             sink->flushStarted= FALSE;
             sink->playbackRate= playbackRate;
+                        sink->segmentFromSeek= FALSE;
+                        sink->segmentSeekTarget= GST_CLOCK_TIME_NONE;
             sink->position= 0;
             sink->currentPTS= 0;
             sink->positionSegmentStart= 0;
@@ -2173,8 +2216,17 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                  (segmentFormat == GST_FORMAT_TIME) )
             {
                GST_DEBUG("using segment position: start %lld position %lld", (long long)segmentStart, (long long)segmentPosition);
-               sink->position= GST_TIME_AS_NSECONDS(segmentPosition);
-               sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentPosition);
+               if ( preserveContinuousPosition )
+               {
+                  sink->position= continuousPositionBase;
+                  sink->positionSegmentStart= continuousPositionBase;
+                  GST_DEBUG("preserve continuous position across zero-based segment: base %lld", (long long)continuousPositionBase);
+               }
+               else
+               {
+                  sink->position= GST_TIME_AS_NSECONDS(segmentPosition);
+                  sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentPosition);
+               }
             }
 
             if (appliedRate != 1.0)
@@ -2191,15 +2243,31 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                sink->segmentNumber++;
                sink->eosEventSeen= FALSE;
                sink->eosDetected= FALSE;
-               sink->position= GST_TIME_AS_NSECONDS(segmentStart);
-               sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentStart);
+               if ( preserveContinuousPosition )
+               {
+                  sink->position= continuousPositionBase;
+                  sink->positionSegmentStart= continuousPositionBase;
+               }
+               else
+               {
+                  sink->position= GST_TIME_AS_NSECONDS(segmentStart);
+                  sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentStart);
+               }
                sink->startPTS= (GST_TIME_AS_MSECONDS(segmentStart)*90LL);
                if ( sink->useSegmentPosition &&
                     (segmentStart != segmentPosition) &&
                     (segmentPosition != -1LL) )
                {
-                  sink->position= GST_TIME_AS_NSECONDS(segmentPosition);
-                  sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentPosition);
+                  if ( preserveContinuousPosition )
+                  {
+                     sink->position= continuousPositionBase;
+                     sink->positionSegmentStart= continuousPositionBase;
+                  }
+                  else
+                  {
+                     sink->position= GST_TIME_AS_NSECONDS(segmentPosition);
+                     sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentPosition);
+                  }
                }
                gst_westeros_sink_soc_set_startPTS( sink, sink->startPTS );
             }
