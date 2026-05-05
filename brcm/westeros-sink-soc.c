@@ -50,6 +50,8 @@
 #define DECODE_VERIFY_MAX_BYTES (4*1024*1024)
 #define MAX_STARTPTS_TO_BUFFER_PTS_MS (5000) /* related to max reasonable Iframe distances */
 #define MAX_STC_PLAY_RATE (2.0)
+#define PTS_STABILITY_MARGIN_MS 1000
+#define PTS_STABILITY_MARGIN (PTS_STABILITY_MARGIN_MS * 90LL)
 
 #ifndef DRM_FORMAT_RGBA8888
 #define DRM_FORMAT_RGBA8888 (0x34324152)
@@ -2958,12 +2960,35 @@ static void updateVideoStatus( GstWesterosSink *sink )
             }
             if ( sink->currentPTS != 0 || sink->soc.frameCount == 0 )
             {
-               if ( sink->soc.waitingForFirstPTSAfterSegment && (sink->currentPTS >= sink->soc.pendingFirstPTS) )
+               if ( sink->soc.waitingForFirstPTSAfterSegment )
                {
-                  GST_WARNING("DEFERRED_UPDATE_APPLIED: currentPTS=%"G_GINT64_FORMAT" >= pendingFirstPTS=%"G_GINT64_FORMAT" APPLYING NOW", sink->currentPTS, sink->soc.pendingFirstPTS);		          sink->firstPTS= sink->soc.pendingFirstPTS;
-                  sink->soc.waitingForFirstPTSAfterSegment= FALSE;
-                  sink->prevPositionSegmentStart = sink->positionSegmentStart;
-                  GST_DEBUG("Applying deferred first PTS update to 0x%"G_GUINT64_FORMAT" %ums ", sink->firstPTS, (guint)sink->firstPTS/90);
+                  gboolean isForwardTransition= (sink->currentPTS >= sink->soc.pendingFirstPTS);
+  
+                  if (isForwardTransition)
+                  {
+                     // FORWARD transition (ad/content switch): wait for decoder stability
+                     if (sink->currentPTS > sink->soc.pendingFirstPTS + PTS_STABILITY_MARGIN)
+                     {
+                        GST_WARNING("DEFERRED_UPDATE_APPLIED (FORWARD): currentPTS=%"G_GINT64_FORMAT" > pendingFirstPTS=%"G_GINT64_FORMAT" + margin APPLYING NOW", 
+                                    sink->currentPTS, sink->soc.pendingFirstPTS);
+                        sink->firstPTS= sink->soc.pendingFirstPTS;
+                        sink->soc.waitingForFirstPTSAfterSegment= FALSE;
+                        sink->prevPositionSegmentStart= sink->positionSegmentStart;
+                        GST_DEBUG("Applying deferred first PTS update (forward) to 0x%"G_GUINT64_FORMAT" %ums ", 
+                                  sink->firstPTS, (guint)sink->firstPTS/90);
+                     }
+                  }
+                  else
+                  {
+                     // BACKWARD transition (user seek): apply immediately
+                     GST_WARNING("DEFERRED_UPDATE_APPLIED (BACKWARD): currentPTS=%"G_GINT64_FORMAT" < pendingFirstPTS=%"G_GINT64_FORMAT" APPLYING IMMEDIATELY", 
+                                 sink->currentPTS, sink->soc.pendingFirstPTS);
+                     sink->firstPTS= sink->soc.pendingFirstPTS;
+                     sink->soc.waitingForFirstPTSAfterSegment= FALSE;
+                     sink->prevPositionSegmentStart= sink->positionSegmentStart;
+                     GST_DEBUG("Applying deferred first PTS update (backward) to 0x%"G_GUINT64_FORMAT" %ums ", 
+                               sink->firstPTS, (guint)sink->firstPTS/90);
+                  }
                }
                if ( (sink->currentPTS < sink->firstPTS) && (sink->currentPTS > 90000) && prevPTS )
                {
