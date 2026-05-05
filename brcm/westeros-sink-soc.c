@@ -2953,8 +2953,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
                   GST_LOG("Deferring firstPTS update to currentPTS %"G_GINT64_FORMAT" %ums", sink->currentPTS, (guint)(sink->currentPTS/90LL));
                   sink->soc.pendingFirstPTS= sink->currentPTS; 
                }
-               //sink->prevPositionSegmentStart = sink->positionSegmentStart;
-               //GST_DEBUG("SegmentStart changed! Updating first PTS to 0x%"G_GUINT64_FORMAT" %ums ", sink->firstPTS, (guint)sink->firstPTS/90);
+               sink->prevPositionSegmentStart= sink->positionSegmentStart;
                sink->soc.waitingForFirstPTSAfterSegment= TRUE;
                GST_DEBUG("SegmentStart changed! Deferring first PTS update to 0x%"G_GUINT64_FORMAT" %ums ", sink->soc.pendingFirstPTS, (guint)sink->soc.pendingFirstPTS/90);
             }
@@ -2973,7 +2972,6 @@ static void updateVideoStatus( GstWesterosSink *sink )
                                     sink->currentPTS, sink->soc.pendingFirstPTS);
                         sink->firstPTS= sink->soc.pendingFirstPTS;
                         sink->soc.waitingForFirstPTSAfterSegment= FALSE;
-                        sink->prevPositionSegmentStart= sink->positionSegmentStart;
                         GST_DEBUG("Applying deferred first PTS update (forward) to 0x%"G_GUINT64_FORMAT" %ums ", 
                                   sink->firstPTS, (guint)sink->firstPTS/90);
                      }
@@ -2985,7 +2983,6 @@ static void updateVideoStatus( GstWesterosSink *sink )
                                  sink->currentPTS, sink->soc.pendingFirstPTS);
                      sink->firstPTS= sink->soc.pendingFirstPTS;
                      sink->soc.waitingForFirstPTSAfterSegment= FALSE;
-                     sink->prevPositionSegmentStart= sink->positionSegmentStart;
                      GST_DEBUG("Applying deferred first PTS update (backward) to 0x%"G_GUINT64_FORMAT" %ums ", 
                                sink->firstPTS, (guint)sink->firstPTS/90);
                   }
