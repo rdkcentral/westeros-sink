@@ -2163,10 +2163,18 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             sink->playbackRate= playbackRate;
             sink->position= 0;
             sink->currentPTS= 0;
+            // Save old positionSegmentStart before resetting
+            gint64 oldPositionSegmentStart = sink->positionSegmentStart;
             sink->positionSegmentStart= 0;
             if ( needSegment || (segmentStart != segmentStartPrev) )
             {
-               sink->prevPositionSegmentStart= 0xFFFFFFFFFFFFFFFFLL;
+               // Only reset prevPositionSegmentStart if the segment position actually changed
+               // to avoid triggering segment change logic for duplicate segment events
+               gint64 newSegmentPos = GST_TIME_AS_NSECONDS(segmentStart);
+               if ( newSegmentPos != oldPositionSegmentStart )
+               {
+                  sink->prevPositionSegmentStart= 0xFFFFFFFFFFFFFFFFLL;
+               }
             }
 
             if ( sink->useSegmentPosition &&
