@@ -25,7 +25,7 @@
 
 #include "westeros-sink.h"
 
-#include "westeros-sink-version.h"
+#include "westeros-version.h"
 
 #ifdef ENABLE_SW_DECODE
 #include "../westeros-sink-sw.c"
@@ -1650,7 +1650,7 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
    {
       case GST_STATE_CHANGE_NULL_TO_READY:
       {
-         printf("westeros (sink) version " WESTEROS_SINK_VERSION_FMT "\n", WESTEROS_SINK_VERSION );
+         printf("westeros (sink) version " WESTEROS_VERSION_FMT "\n", WESTEROS_VERSION );
          printf("gst version %d.%d.%d\n", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
 
          resMgrInit(sink);
@@ -1982,6 +1982,72 @@ static gboolean gst_westeros_sink_unlock_stop(GstBaseSink *base_sink)
    return TRUE;
 }
 
+static WstSinkMode wstDetectSinkMode( GstCaps *caps )
+{
+   GstStructure *structure= gst_caps_get_structure( caps, 0 );
+   const gchar  *mime    = gst_structure_get_name( structure );
+
+   GST_DEBUG("wstDetectSinkMode: mime=%s", mime);
+
+   if ( (g_str_has_prefix( mime, "video/x-raw" )) || (g_str_has_prefix( mime, "video/x-westeros-raw" )) )
+   {
+      return WST_SINK_MODE_RAW;
+   }
+   return WST_SINK_MODE_ENCODED;
+}
+
+static gboolean wstCapsIndicateRaw(GstCaps *caps)
+{
+   GstStructure *structure;
+   const gchar *mime;
+   GstCapsFeatures *features;
+   gchar *capsStr= NULL;
+   gchar *featuresStr= NULL;
+
+   if ( !caps || (gst_caps_get_size(caps) == 0) )
+   {
+      GST_WARNING("wstCapsIndicateRaw: invalid/empty caps -> default RAW");
+      return TRUE;
+   }
+
+   capsStr= gst_caps_to_string(caps);
+   structure= gst_caps_get_structure(caps, 0);
+   mime= (structure ? gst_structure_get_name(structure) : NULL);
+   features= gst_caps_get_features(caps, 0);
+   if ( features )
+   {
+      featuresStr= gst_caps_features_to_string(features);
+   }
+
+   GST_INFO("wstCapsIndicateRaw: caps=%s mime=%s features=%s",
+          (capsStr ? capsStr : "(null)"),
+          (mime ? mime : "(none)"),
+          (featuresStr ? featuresStr : "(none)"));
+
+   if ( mime &&
+        g_strcmp0(mime, "video/x-raw") &&
+        g_strcmp0(mime, "video/x-westeros-raw") )
+   {
+      GST_INFO("wstCapsIndicateRaw: encoded mime detected (%s) -> SOC", mime);
+      if ( capsStr ) g_free(capsStr);
+      if ( featuresStr ) g_free(featuresStr);
+      return FALSE; // SOC for encoded caps
+   }
+
+   if ( features && gst_caps_features_contains(features, "memory:SecMem") )
+   {
+      GST_INFO("wstCapsIndicateRaw: detected memory:SecMem -> SOC");
+      if ( capsStr ) g_free(capsStr);
+      if ( featuresStr ) g_free(featuresStr);
+      return FALSE; // SOC
+   }
+
+   GST_INFO("wstCapsIndicateRaw: SecMem not present -> RAW");
+   if ( capsStr ) g_free(capsStr);
+   if ( featuresStr ) g_free(featuresStr);
+   return TRUE; // RAW (DMABuf / system memory)
+}
+
 #ifdef USE_GST1
 static gboolean gst_westeros_sink_event(GstPad *pad, GstObject *parent, GstEvent *event)
 {
@@ -2058,6 +2124,28 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             }
             else
             #endif
+            {
+               /*Backend selecction. SOC/RAW selection to be handled in Paused_to_playing as CAPS EVENT received*/
+               /*Step 1: Need to Know Which Caps Received RAW or SOC*/
+               sink->sinkMode = wstDetectSinkMode( caps );
+               /*Step 2: Now we Get Sink Mode. Need to Handle CAPS now, Till so far both CAPS get set. Now Either change to SOC/RAW*/
+               if (!sink->pathInitialized)
+               {
+                  gboolean useRaw = wstCapsIndicateRaw(caps);
+                   GST_INFO("CAPS backend decision = %s",
+                              useRaw ? "RAW" : "SOC");
+               
+                  /*Now we have one structure and Initialization for SOC and RAW, So No need for TearDown Or RAW, only handling some Parameters */
+                  if(useRaw && (sink->sinkMode == WST_SINK_MODE_RAW) )
+                  {
+                     sink->useRawMode= TRUE;
+                  }
+                  if (sink->sinkMode)
+                  {
+                     sink->pathInitialized = TRUE;
+                  }
+               }
+            }
             if ( sink->passCaps || (!sink->videoStarted && sink->startAfterCaps) )
             {
                gst_westeros_sink_soc_accept_caps( sink, caps );

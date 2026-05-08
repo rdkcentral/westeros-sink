@@ -101,6 +101,13 @@ typedef struct _WstSinkTimeCode
    guint seconds;
 } WstSinkTimeCode;
 
+typedef enum _WstSinkMode
+{
+   WST_SINK_MODE_UNKNOWN = 0,
+   WST_SINK_MODE_RAW,
+   WST_SINK_MODE_ENCODED
+} WstSinkMode;
+
 #include "westeros-sink-soc.h"
 
 struct _GstWesterosSink
@@ -224,6 +231,11 @@ struct _GstWesterosSink
    long long statsLogFirstLogTime;
    long long statsLogLastLogTime;
    int statsLogFrameRenderCountLast;
+
+   /*To Select SOC or Raw specific fields */
+   WstSinkMode sinkMode;
+   gboolean pathInitialized;
+   gboolean useRawMode;   
 
    struct _GstWesterosSinkSoc soc;
 };
