@@ -262,6 +262,7 @@ struct _GstWesterosSinkSoc
    gboolean decodeError;
    gboolean quitVideoOutputThread;
    GThread *videoOutputThread;
+   int videoOutputThreadWakeupPipe[2];
    gboolean quitEOSDetectionThread;
    GThread *eosDetectionThread;
    gboolean quitDispatchThread;

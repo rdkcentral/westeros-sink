@@ -102,6 +102,17 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
                                    sink->soc.videoOutputThread= temp; \
                                 }
 
+#define WAKEUP_VIDEO_OUTPUT_THREAD(sink) \
+   do { \
+      if ( (sink)->soc.videoOutputThreadWakeupPipe[1] >= 0 ) \
+      { \
+         char _wc= 'W'; \
+         (void)write( (sink)->soc.videoOutputThreadWakeupPipe[1], &_wc, 1 ); \
+      } \
+   } while(0)
+
+#define VIDEO_OUTPUT_POLL_TIMEOUT_MS (20)
+
 enum
 {
   PROP_DEVICE= PROP_SOC_BASE,
@@ -1032,6 +1043,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.quitEOSDetectionThread= FALSE;
    sink->soc.quitDispatchThread= FALSE;
    sink->soc.videoOutputThread= NULL;
+   sink->soc.videoOutputThreadWakeupPipe[0]= -1;
+   sink->soc.videoOutputThreadWakeupPipe[1]= -1;
    sink->soc.eosDetectionThread= NULL;
    sink->soc.dispatchThread= NULL;
    sink->soc.videoPlaying= FALSE;
@@ -2541,6 +2554,12 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    sink->soc.quitVideoOutputThread= FALSE;
    if ( sink->soc.videoOutputThread == NULL )
    {
+      sink->soc.videoOutputThreadWakeupPipe[0]= -1;
+      sink->soc.videoOutputThreadWakeupPipe[1]= -1;
+      if ( pipe(sink->soc.videoOutputThreadWakeupPipe) != 0 )
+      {
+         GST_WARNING_OBJECT(sink, "gst_westeros_sink_soc_start_video: failed to create wakeup pipe: errno %d", errno);
+      }
       GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_video_output thread");
       sink->soc.videoOutputThread= g_thread_new("wstSinkVidOut", wstVideoOutputThread, sink);
    }
@@ -2738,8 +2757,16 @@ static void wstSinkSocStopVideo( GstWesterosSink *sink )
    if ( sink->soc.videoOutputThread )
    {
       sink->soc.quitVideoOutputThread= TRUE;
+      WAKEUP_VIDEO_OUTPUT_THREAD(sink);
       g_thread_join( sink->soc.videoOutputThread );
       sink->soc.videoOutputThread= NULL;
+      if ( sink->soc.videoOutputThreadWakeupPipe[0] >= 0 )
+      {
+         close( sink->soc.videoOutputThreadWakeupPipe[0] );
+         close( sink->soc.videoOutputThreadWakeupPipe[1] );
+         sink->soc.videoOutputThreadWakeupPipe[0]= -1;
+         sink->soc.videoOutputThreadWakeupPipe[1]= -1;
+      }
    }
 
    if ( sink->soc.eosDetectionThread )
@@ -5924,6 +5951,7 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
    long long delay;
 
    sink->soc.quitVideoOutputThread= TRUE;
+   WAKEUP_VIDEO_OUTPUT_THREAD(sink);
 
    delay= ((sink->soc.frameRate > 0) ? 1000000/sink->soc.frameRate : 1000000/60);
    usleep( delay );
@@ -7181,27 +7209,51 @@ capture_start:
 
          if ( sink->soc.hasEvents )
          {
-            struct pollfd pfd;
+            struct pollfd pfds[3];
+            int nfds= 1;
 
-            pfd.fd= sink->soc.v4l2Fd;
-            pfd.events= POLLIN | POLLRDNORM | POLLPRI;
-            pfd.revents= 0;
+            pfds[0].fd= sink->soc.v4l2Fd;
+            pfds[0].events= POLLIN | POLLRDNORM | POLLPRI;
+            pfds[0].revents= 0;
+            /* pfds[1]: video server socket - release messages requeue output buffers */
+            pfds[1].fd= (sink->soc.conn ? sink->soc.conn->socketFd : -1);
+            pfds[1].events= POLLIN;
+            pfds[1].revents= 0;
+            if ( pfds[1].fd >= 0 ) nfds= 2;
+            /* pfds[2]: wakeup pipe - quit/state-change signals */
+            pfds[2].fd= sink->soc.videoOutputThreadWakeupPipe[0];
+            pfds[2].events= POLLIN;
+            pfds[2].revents= 0;
+            if ( pfds[2].fd >= 0 ) nfds= 3;
 
-            poll( &pfd, 1, 0);
+            poll( pfds, nfds, VIDEO_OUTPUT_POLL_TIMEOUT_MS);
+
+            /* drain wakeup pipe */
+            if ( pfds[2].revents & POLLIN )
+            {
+               char _buf[64];
+               (void)read( sink->soc.videoOutputThreadWakeupPipe[0], _buf, sizeof(_buf) );
+            }
+
+            /* if video server sent a release message, loop back to top where processMessages is called under lock */
+            if ( pfds[1].revents & POLLIN )
+            {
+               continue;
+            }
 
             if ( sink->soc.quitVideoOutputThread ) break;
 
-            if ( ((pfd.revents & (POLLIN|POLLRDNORM)) == 0) || sink->soc.decoderLastFrame  )
+            if ( ((pfds[0].revents & (POLLIN|POLLRDNORM)) == 0) || sink->soc.decoderLastFrame  )
             {
-               if ( pfd.revents & (POLLIN|POLLRDNORM) )
+               if ( pfds[0].revents & (POLLIN|POLLRDNORM) )
                {
-                  GST_DEBUG("checking events: revents %x decoderLastFrame %d", pfd.revents, sink->soc.decoderLastFrame);
+                  GST_DEBUG("checking events: revents %x decoderLastFrame %d", pfds[0].revents, sink->soc.decoderLastFrame);
                }
                /* check events if streaming is starting or we have reached last frame */
                if ( (!sink->soc.numBuffersOut || (sink->soc.decoderLastFrame || sink->soc.expectNoLastFrame)) &&
-                    (havePriEvent || (pfd.revents & POLLPRI)) )
+                    (havePriEvent || (pfds[0].revents & POLLPRI)) )
                {
-                  pfd.revents &= ~POLLPRI;
+                  pfds[0].revents &= ~POLLPRI;
                   havePriEvent= false;
                   wstProcessEvents( sink );
                   if ( sink->soc.needCaptureRestart )
@@ -7222,10 +7274,9 @@ capture_start:
                      goto exit;
                   }
                }
-               usleep( 1000 );
                continue;
             }
-            if ( pfd.revents & POLLPRI )
+            if ( pfds[0].revents & POLLPRI )
             {
                havePriEvent= true;
             }
