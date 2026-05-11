@@ -98,6 +98,7 @@ struct _GstWesterosSinkSoc
    gint64 lastRenderPts;
    gint64 pendingFirstPTS;
    gboolean waitingForFirstPTSAfterSegment;
+   gint64 lastProcessedSegmentPosition;
    gboolean emitUnderflow;
    gboolean emitPTSError;
    gboolean emitResourceChange;

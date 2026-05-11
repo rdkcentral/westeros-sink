@@ -850,6 +850,9 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.checkForEOS= FALSE;
    sink->soc.emitEOS= FALSE;
    sink->soc.lastRenderPts=0;
+   sink->soc.pendingFirstPTS= 0;
+   sink->soc.waitingForFirstPTSAfterSegment= FALSE;
+   sink->soc.lastProcessedSegmentPosition= -1;
    sink->soc.emitUnderflow= FALSE;
    sink->soc.emitPTSError= FALSE;
    sink->soc.emitResourceChange= FALSE;
@@ -2932,9 +2935,12 @@ static void updateVideoStatus( GstWesterosSink *sink )
                logFrameLatency(sink, videoStatus.pts);
             }
             sink->currentPTS= ((gint64)videoStatus.pts)*2LL;
-            if (sink->prevPositionSegmentStart != sink->positionSegmentStart)
+            
+            // Use internal tracking instead of prevPositionSegmentStart from westeros-sink.c
+            // This makes us independent of segment event handling in the common layer
+            if (sink->soc.lastProcessedSegmentPosition != sink->positionSegmentStart)
             {
-               GST_WARNING("ENTERING_SEGMENT_CHANGE: prevPos=%"G_GINT64_FORMAT" newPos=%"G_GINT64_FORMAT" currentPTS=%"G_GINT64_FORMAT, sink->prevPositionSegmentStart, sink->positionSegmentStart, sink->currentPTS);
+               GST_WARNING("ENTERING_SEGMENT_CHANGE: prevPos=%"G_GINT64_FORMAT" newPos=%"G_GINT64_FORMAT" currentPTS=%"G_GINT64_FORMAT, sink->soc.lastProcessedSegmentPosition, sink->positionSegmentStart, sink->currentPTS);
                gboolean useStartPTS = (sink->currentPTS > sink->startPTS) && ((sink->currentPTS - sink->startPTS) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90LL);
                GST_DEBUG("currentPTS %"G_GINT64_FORMAT" %"G_GINT64_FORMAT"ms  startPTS %"G_GINT64_FORMAT" %"G_GINT64_FORMAT"ms  useStartPTS %d", sink->currentPTS, sink->currentPTS/90LL, sink->startPTS, sink->startPTS/90LL, useStartPTS);
                if ( sink->currentPTS == 0 || useStartPTS)
@@ -2953,6 +2959,8 @@ static void updateVideoStatus( GstWesterosSink *sink )
                   GST_LOG("Deferring firstPTS update to currentPTS %"G_GINT64_FORMAT" %ums", sink->currentPTS, (guint)(sink->currentPTS/90LL));
                   sink->soc.pendingFirstPTS= sink->currentPTS; 
                }
+               // Update our internal tracking to match the new segment position
+               sink->soc.lastProcessedSegmentPosition= sink->positionSegmentStart;
                sink->prevPositionSegmentStart= sink->positionSegmentStart;
                sink->soc.waitingForFirstPTSAfterSegment= TRUE;
                GST_DEBUG("SegmentStart changed! Deferring first PTS update to 0x%"G_GUINT64_FORMAT" %ums ", sink->soc.pendingFirstPTS, (guint)sink->soc.pendingFirstPTS/90);
