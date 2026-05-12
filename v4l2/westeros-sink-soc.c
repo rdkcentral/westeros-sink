@@ -111,6 +111,7 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
       } \
    } while(0)
 
+/*Maximum time (ms) the video output thread blocks in poll()*/
 #define VIDEO_OUTPUT_POLL_TIMEOUT_MS (20)
 
 enum
@@ -2554,6 +2555,11 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    sink->soc.quitVideoOutputThread= FALSE;
    if ( sink->soc.videoOutputThread == NULL )
    {
+      if ( sink->soc.videoOutputThreadWakeupPipe[0] >= 0)
+      {
+	      close( sink->soc.videoOutputThreadWakeupPipe[0] );
+	      close( sink->soc.videoOutputThreadWakeupPipe[1] );
+      }
       sink->soc.videoOutputThreadWakeupPipe[0]= -1;
       sink->soc.videoOutputThreadWakeupPipe[1]= -1;
       if ( pipe(sink->soc.videoOutputThreadWakeupPipe) != 0 )
