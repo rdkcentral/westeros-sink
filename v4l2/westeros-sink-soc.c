@@ -1061,6 +1061,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.framesBeforeHideGfx= 0;
    sink->soc.prevFrameTimeGfx= 0;
    sink->soc.prevFramePTSGfx= 0;
+   sink->soc.positionUpdateSuspended= FALSE;
+   sink->soc.firstSegmentBufferId= -1;
    sink->soc.isSourceDTV= FALSE;
    sink->soc.startedOutOfSegment= FALSE;
    sink->soc.videoX= sink->windowX;
@@ -2212,7 +2214,9 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
             {
                sink->firstPTS= sink->soc.currentInputPTS;
                sink->prevPositionSegmentStart = sink->positionSegmentStart;
-               GST_DEBUG("SegmentStart changed! Updating first PTS to %lld ", sink->firstPTS);
+               sink->soc.positionUpdateSuspended= TRUE;
+               sink->soc.firstSegmentBufferId= -1;
+               GST_DEBUG("SegmentStart changed! Updating first PTS to %lld, position update suspended", sink->firstPTS);
             }
             if ( sink->soc.currentInputPTS != 0 || sink->soc.frameInCount == 0 )
             {
@@ -4586,6 +4590,9 @@ static void wstSendFlushVideoClientConnection( WstVideoClientConnection *conn )
       {
          GST_LOG("sent flush to video server");
          FRAME("sent flush to video server");
+         /* Reset position update suspended state on flush - old firstSegmentBufferId is now invalid */
+         conn->sink->soc.positionUpdateSuspended= FALSE;
+         conn->sink->soc.firstSegmentBufferId= -1;
       }
    }
 }
@@ -5456,6 +5463,12 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                         if ( mlen >= 5)
                         {
                           int bid= getU32( &m[4] );
+                          /* Check if this is the first buffer of the new segment */
+                          if ( sink->soc.positionUpdateSuspended && bid == sink->soc.firstSegmentBufferId )
+                          {
+                             sink->soc.positionUpdateSuspended= FALSE;
+                             GST_DEBUG("First segment buffer %d released, position update resumed", bid);
+                          }
                           if ( (bid >= sink->soc.bufferIdOutBase) && (bid < sink->soc.bufferIdOutBase+sink->soc.numBuffersOut) )
                           {
                              int bi= bid-sink->soc.bufferIdOutBase;
@@ -5509,6 +5522,24 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                            if ( frameTime != -1LL )
                            {
                               gint64 currentNano= frameTime*1000LL;
+
+                              /*
+                               * Skip position updates while waiting for first segment buffer to be released.
+                               * This prevents stale frames from the previous segment from corrupting position.
+                               */
+                              if ( sink->soc.positionUpdateSuspended )
+                              {
+                                 GST_DEBUG("Position update suspended - skipping update for frameTime %lld", frameTime);
+                                 if (sink->soc.frameOutCount > 0 )
+                                 {
+                                    if (sink->soc.frameDisplayCount == 0)
+                                    {
+                                       sink->soc.emitFirstFrameSignal= TRUE;
+                                    }
+                                    ++sink->soc.frameDisplayCount;
+                                 }
+                                 break;
+                              }
 
                               /*
                                * Prevent stale frameTime from corrupting position during seeks.
@@ -5775,6 +5806,13 @@ static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, i
          i += putU32( &mbody[i], bufferId );
          i += putS64( &mbody[i], sink->soc.outBuffers[buffIndex].frameTime );
 
+         /* Track first buffer sent after segment change for position update suspended logic */
+         if ( sink->soc.positionUpdateSuspended && sink->soc.firstSegmentBufferId == -1 )
+         {
+            sink->soc.firstSegmentBufferId= bufferId;
+            GST_DEBUG("First segment buffer id set to %d", bufferId);
+         }
+
          iov[0].iov_base= (char*)mbody;
          iov[0].iov_len= i;
 
@@ -5964,6 +6002,8 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
    sink->startAfterCaps= TRUE;
    sink->soc.prevFrameTimeGfx= 0;
    sink->soc.prevFramePTSGfx= 0;
+   sink->soc.positionUpdateSuspended= FALSE;
+   sink->soc.firstSegmentBufferId= -1;
    sink->soc.prevFrame1Fd= -1;
    sink->soc.prevFrame2Fd= -1;
    sink->soc.nextFrameFd= -1;

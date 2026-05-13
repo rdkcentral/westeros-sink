@@ -282,6 +282,8 @@ struct _GstWesterosSinkSoc
    gint64 prevFrameTimeGfx;
    gint64 prevFramePTSGfx;
    WstVideoClientConnection *conn;
+   gboolean positionUpdateSuspended;
+   int firstSegmentBufferId;
    int videoX;
    int videoY;
    int videoWidth;
