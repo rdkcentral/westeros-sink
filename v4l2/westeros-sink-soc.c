@@ -107,7 +107,13 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
       if ( (sink)->soc.videoOutputThreadWakeupPipe[1] >= 0 ) \
       { \
          char _wc= 'W'; \
-         (void)write( (sink)->soc.videoOutputThreadWakeupPipe[1], &_wc, 1 ); \
+         ssize_t _wr; \
+         do { _wr= write( (sink)->soc.videoOutputThreadWakeupPipe[1], &_wc, 1 ); } \
+         while ( _wr < 0 && errno == EINTR ); \
+         if ( _wr < 0 && errno != EAGAIN ) \
+         { \
+            GST_ERROR("WAKEUP_VIDEO_OUTPUT_THREAD: write failed: errno %d", errno); \
+         } \
       } \
    } while(0)
 
@@ -1268,6 +1274,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                      GST_DEBUG("Already prerolled, set frameAdvanced");
                      LOCK(sink);
                      sink->soc.frameAdvance= TRUE;
+		     WAKEUP_VIDEO_OUTPUT_THREAD(sink);
                      UNLOCK(sink);
                      GST_BASE_SINK(sink)->need_preroll= FALSE;
                      GST_BASE_SINK(sink)->have_preroll= TRUE;
@@ -1278,6 +1285,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                      GST_DEBUG("Not yet prerolled, set frameAdvanced");
                      LOCK(sink);
                      sink->soc.frameAdvance= TRUE;
+		     WAKEUP_VIDEO_OUTPUT_THREAD(sink);
                      UNLOCK(sink);
                   }
                   GST_BASE_SINK_PREROLL_UNLOCK(basesink);
@@ -2562,9 +2570,9 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       }
       sink->soc.videoOutputThreadWakeupPipe[0]= -1;
       sink->soc.videoOutputThreadWakeupPipe[1]= -1;
-      if ( pipe(sink->soc.videoOutputThreadWakeupPipe) != 0 )
+      if ( pipe2(sink->soc.videoOutputThreadWakeupPipe, O_NONBLOCK) != 0  )
       {
-         GST_WARNING_OBJECT(sink, "gst_westeros_sink_soc_start_video: failed to create wakeup pipe: errno %d", errno);
+         GST_ERROR_OBJECT(sink, "gst_westeros_sink_soc_start_video: failed to create wakeup pipe: errno %d", errno);
       }
       GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_video_output thread");
       sink->soc.videoOutputThread= g_thread_new("wstSinkVidOut", wstVideoOutputThread, sink);
@@ -5972,6 +5980,13 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
    {
       g_thread_join( sink->soc.videoOutputThread );
       sink->soc.videoOutputThread= NULL;
+      if ( sink->soc.videoOutputThreadWakeupPipe[0] >= 0 )
+      {
+	      close( sink->soc.videoOutputThreadWakeupPipe[0] );
+	      close( sink->soc.videoOutputThreadWakeupPipe[1] );
+	      sink->soc.videoOutputThreadWakeupPipe[0]= -1;
+	      sink->soc.videoOutputThreadWakeupPipe[1]= -1;
+      }
    }
 
    LOCK(sink);
@@ -7128,19 +7143,44 @@ capture_start:
 
          if ( sink->soc.hasEvents )
          {
-            struct pollfd pfd;
+	    struct pollfd pfds[3];
+	    int nfds= 1;
+	    pfds[0].fd= sink->soc.v4l2Fd;
+	    pfds[0].events= POLLIN | POLLRDNORM | POLLPRI;
+	    pfds[0].revents= 0;
+	    pfds[1].fd= (sink->soc.conn ? sink->soc.conn->socketFd : -1);
+	    pfds[1].events= POLLIN;
+	    pfds[1].revents= 0;
+	    if ( pfds[1].fd >= 0 )
+		    nfds = 2;
+	    pfds[2].fd= sink->soc.videoOutputThreadWakeupPipe[0];
+	    pfds[2].events= POLLIN;
+	    pfds[2].revents= 0;
 
-            pfd.fd= sink->soc.v4l2Fd;
-            pfd.events= POLLIN | POLLRDNORM | POLLPRI;
-            pfd.revents= 0;
+	    if ( pfds[2].fd >= 0 )
+		    nfds = 3;
 
-            poll( &pfd, 1, 0);
+	    if ( poll( pfds, nfds, VIDEO_OUTPUT_POLL_TIMEOUT_MS ) < 0 )
+	    {
+		    if ( errno == EINTR ) continue;
+		    break;
+	    }
+	    if ( pfds[2].revents & POLLIN )
+	    {
+		    char _buf[64];
+		    ssize_t _nr= read( sink->soc.videoOutputThreadWakeupPipe[0], _buf, sizeof(_buf) );
+		    if ( _nr < 0 )
+		    {
+			    GST_ERROR("wstVideoOutputThread(paused): wakeup pipe drain failed: errno %d", errno);
+		    }
+		    if ( sink->soc.quitVideoOutputThread ) break;
+	    }
 
             if ( sink->soc.quitVideoOutputThread ) break;
 
             /* check events if streaming is starting or we have reached last frame */
             if ( (!sink->soc.numBuffersOut || (sink->soc.decoderLastFrame || sink->soc.expectNoLastFrame)) &&
-                 (havePriEvent || (pfd.revents & POLLPRI)) )
+                 (havePriEvent || (pfds[0].revents & POLLPRI)) )
             {
                havePriEvent= false;
                wstProcessEvents( sink );
@@ -7152,13 +7192,11 @@ capture_start:
 
             if ( sink->soc.quitVideoOutputThread ) break;
 
-            if ( pfd.revents & (POLLIN|POLLRDNORM) )
+            if ( pfds[0].revents & (POLLIN|POLLRDNORM) )
             {
                goto capture_ready;
             }
          }
-
-         usleep( 1000 );
       }
       else
       {
@@ -7232,13 +7270,23 @@ capture_start:
             pfds[2].revents= 0;
             if ( pfds[2].fd >= 0 ) nfds= 3;
 
-            poll( pfds, nfds, VIDEO_OUTPUT_POLL_TIMEOUT_MS);
+            if (poll( pfds, nfds, VIDEO_OUTPUT_POLL_TIMEOUT_MS) <0)
+	    {
+		    if ( errno == EINTR ) continue;
+		    break;
+	    }
 
             /* drain wakeup pipe */
             if ( pfds[2].revents & POLLIN )
             {
                char _buf[64];
-               (void)read( sink->soc.videoOutputThreadWakeupPipe[0], _buf, sizeof(_buf) );
+	       ssize_t _nr= read( sink->soc.videoOutputThreadWakeupPipe[0], _buf, sizeof(_buf) );
+	       if ( _nr < 0 )
+	       {
+		       GST_ERROR("wstVideoOutputThread: wakeup pipe drain failed: errno %d", errno);
+	       }
+	       /* quit immediately if quitVideoOutputThread is requested*/
+	       if ( sink->soc.quitVideoOutputThread ) break;
             }
 
             /* if video server sent a release message, loop back to top where processMessages is called under lock */
@@ -7693,6 +7741,7 @@ static GstFlowReturn prerollSinkSoc(GstBaseSink *base_sink, GstBuffer *buffer)
    {
       LOCK(sink);
       sink->soc.frameAdvance= TRUE;
+      WAKEUP_VIDEO_OUTPUT_THREAD(sink);
       UNLOCK(sink);
       GST_BASE_SINK(sink)->need_preroll= FALSE;
       GST_BASE_SINK(sink)->have_preroll= TRUE;
