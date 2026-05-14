@@ -1347,10 +1347,9 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             {
                GST_DEBUG("set show-video-window to %d", show);
                sink->soc.showChanged= TRUE;
-	            WAKEUP_VIDEO_OUTPUT_THREAD(sink);
                sink->show= show;
-
                sink->visible= sink->show;
+               WAKEUP_VIDEO_OUTPUT_THREAD(sink);
             }
          }
          break;
@@ -1417,9 +1416,9 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             if ( (keep != sink->soc.keepLastFrame) || !sink->soc.conn )
             {
                sink->soc.keepLastFrameChanged= TRUE;
-	            WAKEUP_VIDEO_OUTPUT_THREAD(sink);
             }
             sink->soc.keepLastFrame= keep;
+            WAKEUP_VIDEO_OUTPUT_THREAD(sink);
             GST_DEBUG("set keepLastFrame %d", sink->soc.keepLastFrame);
             break;
          }
@@ -7180,8 +7179,10 @@ capture_start:
             if ( pfds[2].revents & POLLIN )
             {
                char _buf[64];
-               ssize_t _nr= read( sink->soc.videoOutputThreadWakeupPipe[0], _buf, sizeof(_buf) );
-               if ( _nr < 0 )
+               ssize_t _nr;
+               do { _nr= read( sink->soc.videoOutputThreadWakeupPipe[0], _buf, sizeof(_buf) ); }
+               while ( _nr < 0 && errno == EINTR );
+               if ( _nr < 0 && errno != EAGAIN )
                {
                   GST_ERROR("wstVideoOutputThread(paused): wakeup pipe drain failed: errno %d", errno);
                }
@@ -7295,8 +7296,10 @@ capture_start:
             if ( pfds[2].revents & POLLIN )
             {
                char _buf[64];
-               ssize_t _nr= read( sink->soc.videoOutputThreadWakeupPipe[0], _buf, sizeof(_buf) );
-               if ( _nr < 0 )
+               ssize_t _nr;
+               do { _nr= read( sink->soc.videoOutputThreadWakeupPipe[0], _buf, sizeof(_buf) ); }
+               while ( _nr < 0 && errno == EINTR );
+               if ( _nr < 0 && errno != EAGAIN )
                {
                   GST_ERROR("wstVideoOutputThread: wakeup pipe drain failed: errno %d", errno);
                }
