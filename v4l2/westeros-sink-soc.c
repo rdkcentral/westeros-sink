@@ -1280,7 +1280,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                      GST_DEBUG("Already prerolled, set frameAdvanced");
                      LOCK(sink);
                      sink->soc.frameAdvance= TRUE;
-		     WAKEUP_VIDEO_OUTPUT_THREAD(sink);
+		               WAKEUP_VIDEO_OUTPUT_THREAD(sink);
                      UNLOCK(sink);
                      GST_BASE_SINK(sink)->need_preroll= FALSE;
                      GST_BASE_SINK(sink)->have_preroll= TRUE;
@@ -1291,7 +1291,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                      GST_DEBUG("Not yet prerolled, set frameAdvanced");
                      LOCK(sink);
                      sink->soc.frameAdvance= TRUE;
-		     WAKEUP_VIDEO_OUTPUT_THREAD(sink);
+		               WAKEUP_VIDEO_OUTPUT_THREAD(sink);
                      UNLOCK(sink);
                   }
                   GST_BASE_SINK_PREROLL_UNLOCK(basesink);
@@ -1347,7 +1347,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             {
                GST_DEBUG("set show-video-window to %d", show);
                sink->soc.showChanged= TRUE;
-	       WAKEUP_VIDEO_OUTPUT_THREAD(sink);
+	            WAKEUP_VIDEO_OUTPUT_THREAD(sink);
                sink->show= show;
 
                sink->visible= sink->show;
@@ -1417,7 +1417,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             if ( (keep != sink->soc.keepLastFrame) || !sink->soc.conn )
             {
                sink->soc.keepLastFrameChanged= TRUE;
-	       WAKEUP_VIDEO_OUTPUT_THREAD(sink);
+	            WAKEUP_VIDEO_OUTPUT_THREAD(sink);
             }
             sink->soc.keepLastFrame= keep;
             GST_DEBUG("set keepLastFrame %d", sink->soc.keepLastFrame);
@@ -1865,14 +1865,14 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
                sink->soc.frameRateFractionNum= num;
                sink->soc.frameRateFractionDenom= denom;
                sink->soc.frameRateChanged= TRUE;
-	       WAKEUP_VIDEO_OUTPUT_THREAD(sink);
+	            WAKEUP_VIDEO_OUTPUT_THREAD(sink);
             }
          }
          if ( (sink->soc.frameRate == 0.0) && (sink->soc.frameRateFractionDenom == 0) )
          {
             sink->soc.frameRateFractionDenom= 1;
             sink->soc.frameRateChanged= TRUE;
-	    WAKEUP_VIDEO_OUTPUT_THREAD(sink);
+	         WAKEUP_VIDEO_OUTPUT_THREAD(sink);
          }
          width= -1;
          if ( gst_structure_get_int( structure, "width", &width ) )
