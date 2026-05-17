@@ -849,6 +849,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.checkForEOS= FALSE;
    sink->soc.emitEOS= FALSE;
    sink->soc.lastRenderPts=0;
+   sink->soc.positionUpdateSuspended= FALSE;
+   sink->soc.firstSegmentPTS= -1;
    sink->soc.emitUnderflow= FALSE;
    sink->soc.emitPTSError= FALSE;
    sink->soc.emitResourceChange= FALSE;
@@ -2945,10 +2947,24 @@ static void updateVideoStatus( GstWesterosSink *sink )
                   sink->firstPTS= sink->currentPTS;
                }
                sink->prevPositionSegmentStart = sink->positionSegmentStart;
-               GST_DEBUG("SegmentStart changed! Updating first PTS to 0x%"G_GUINT64_FORMAT" %ums ", sink->firstPTS, (guint)sink->firstPTS/90);
+               sink->soc.positionUpdateSuspended= TRUE;
+               sink->soc.firstSegmentPTS= sink->firstPTS;
+               GST_DEBUG("SegmentStart changed! Updating first PTS to 0x%"G_GUINT64_FORMAT" %ums, position update suspended", sink->firstPTS, (guint)sink->firstPTS/90);
             }
             if ( sink->currentPTS != 0 || sink->soc.frameCount == 0 )
             {
+               /* Resume position updates once decoder has caught up to new segment */
+               if ( sink->soc.positionUpdateSuspended && sink->currentPTS >= sink->soc.firstSegmentPTS )
+               {
+                  sink->soc.positionUpdateSuspended= FALSE;
+                  GST_DEBUG("Position update resumed, currentPTS %"G_GINT64_FORMAT" >= firstSegmentPTS %"G_GINT64_FORMAT, sink->currentPTS, sink->soc.firstSegmentPTS);
+               }
+               if ( sink->soc.positionUpdateSuspended )
+               {
+                  GST_DEBUG("Position update suspended - skipping update for PTS %"G_GINT64_FORMAT, sink->currentPTS);
+               }
+               else
+               {
                if ( (sink->currentPTS < sink->firstPTS) && (sink->currentPTS > 90000) && prevPTS )
                {
                   // If we have hit a discontinuity that doesn't look like rollover, then
@@ -2968,6 +2984,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
                if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
                {
                   sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
+               }
                }
             }
 
