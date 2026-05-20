@@ -1606,9 +1606,9 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 {
    GST_DEBUG("gst_westeros_sink_soc_flush");
+   LOCK(sink);
    if ( sink->videoStarted )
    {
-      LOCK(sink);
       sink->videoStarted= FALSE;
       UNLOCK(sink);
       wstSendFlushVideoClientConnection( sink->soc.conn );
@@ -1618,6 +1618,10 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
       sink->soc.prevFrame1Fd= -1;
       sink->soc.prevFrame2Fd= -1;
       sink->soc.nextFrameFd= -1;
+   }
+   else
+   {
+      UNLOCK(sink);
    }
    LOCK(sink);
    sink->soc.frameInCount= 0;
