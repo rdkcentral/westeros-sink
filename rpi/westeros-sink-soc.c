@@ -870,7 +870,7 @@ gboolean gst_westeros_sink_soc_get_component( GstWesterosSink *sink, const char 
    gboolean result= FALSE;
    OMX_ERRORTYPE omxerr;
    OMX_PORT_PARAM_TYPE portParam;
-   OMX_PARAM_PORTDEFINITIONTYPE portDef;
+   OMX_PARAM_PORTDEFINITIONTYPE portDef= {0};
    char versionName[128];
    OMX_UUIDTYPE uid;
    int port;
@@ -1257,6 +1257,9 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
       goto exit;
    }
    sink->soc.semInputActive= true;
+   LOCK( sink );
+   sink->soc.firstFrameSignalled= false;
+   UNLOCK( sink );
    
    if ( sink->soc.capacityInputBuffers < portDef.nBufferCountActual )
    {
