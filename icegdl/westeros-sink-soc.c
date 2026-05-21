@@ -435,16 +435,16 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
          }
          if ( scaleMode >= 0 )
          {
-            if ( scaleMode != sink->soc.scaleMode )
-            {
-               LOCK(sink);
+          LOCK(sink);
+          if ( scaleMode != sink->soc.scaleMode )
+          {
                sink->soc.scaleMode= scaleMode;
                if ( sink->soc.vidsink != ISMD_DEV_HANDLE_INVALID )
                {
                   gst_westeros_sink_soc_update_video_position(sink);
                }
-               UNLOCK(sink);
             }
+          UNLOCK(sink);
          }
          break;
       }
