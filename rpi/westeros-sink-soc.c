@@ -767,7 +767,7 @@ static OMX_ERRORTYPE omxWaitCommandComplete( GstWesterosSink *sink, OMX_COMMANDT
    OMX_ERRORTYPE omxerr= OMX_ErrorNone;
    OMX_AsyncResult *pAsync= 0;
    OMX_AsyncResult asyncError;
-   bool done, error;
+   bool done= false, error= false;
 
    pAsync= omxGetAsyncResult( sink, (OMX_U32)cmd, nData1 );
    if ( pAsync )
