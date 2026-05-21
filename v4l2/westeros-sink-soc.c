@@ -5848,10 +5848,9 @@ static bool wstWaitForLastFrame( GstWesterosSink *sink )
    int rc;
    double frameRate;
    int count;
-   int decoderEOS, decoderEOSPrev, displayCount;
+   int decoderEOS= 0, decoderEOSPrev= 0, displayCount;
    bool videoPlaying, flushStarted;
    bool result = TRUE;
-
    if ( sink->soc.frameInCount > 2 && sink->soc.frameOutCount > 0)
    {
       if ( sink->soc.hasEOSEvents && !sink->soc.expectNoLastFrame )
