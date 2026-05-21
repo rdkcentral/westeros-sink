@@ -47,7 +47,7 @@ static void gst_westeros_buffer_pool_finalize (GObject * object);
 #ifdef USE_GST1
 static gboolean gst_westeros_soc_sink_event(GstPad *pad, GstObject *parent, GstEvent *event);
 #else
-static gboolean gst_westeros_soc_sink_event(GstPad *pad, GstEvent *event)
+static gboolean gst_westeros_soc_sink_event(GstPad *pad, GstEvent *event);
 #endif
 #define gst_westeros_buffer_pool_parent_class parent_class
 
