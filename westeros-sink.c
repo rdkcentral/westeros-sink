@@ -25,7 +25,7 @@
 
 #include "westeros-sink.h"
 
-#include "westeros-sink-version.h"
+#include "westeros-version.h"
 
 #ifdef ENABLE_SW_DECODE
 #include "../westeros-sink-sw.c"
@@ -103,6 +103,9 @@ static gboolean gst_westeros_sink_stop(GstBaseSink *base_sink);
 static gboolean gst_westeros_sink_unlock(GstBaseSink *base_sink);
 static gboolean gst_westeros_sink_unlock_stop(GstBaseSink *base_sink);
 static gboolean gst_westeros_sink_check_caps(GstWesterosSink *sink, GstPad *peer);
+static void wstEventCounterReset(GstWesterosSink *sink, gboolean newSession, const char *reason);
+static void wstEventCounterNote(GstWesterosSink *sink, GstEventType type);
+static void wstEventCounterDump(GstWesterosSink *sink, const char *reason);
 #ifdef USE_GST1
 static gboolean gst_westeros_sink_event(GstPad *pad, GstObject *parent, GstEvent *event);
 static GstPadLinkReturn gst_westeros_sink_link(GstPad *pad, GstObject *parent, GstPad *peer);
@@ -117,6 +120,123 @@ static gboolean gst_westeros_sink_sink_query(GstPad *pad, GstQuery *query);
 static GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer *buffer);
 static GstFlowReturn gst_westeros_sink_preroll(GstBaseSink *base_sink, GstBuffer *buffer);
 
+/*For Event Tracking */
+static void wstEventCounterReset(GstWesterosSink *sink, gboolean newSession, const char *reason)
+{
+   LOCK(sink);
+   if (newSession)
+   {
+      ++sink->eventSessionId;
+   }
+   sink->eventCountTotal= 0;
+   sink->eventCountCaps= 0;
+   sink->eventCountTag= 0;
+   sink->eventCountSegment= 0;
+   sink->eventCountStreamStart= 0;
+   sink->eventCountStreamGroupDone= 0;
+   sink->eventCountEos= 0;
+   sink->eventCountFlushStart= 0;
+   sink->eventCountFlushStop= 0;
+   sink->eventCountOther= 0;
+   UNLOCK(sink);
+
+   GST_INFO_OBJECT(sink, "WST-EVENT-COUNT reset: session=%u reason=%s", sink->eventSessionId, (reason ? reason : "unspecified"));
+}
+
+static void wstEventCounterNote(GstWesterosSink *sink, GstEventType type)
+{
+   LOCK(sink);
+   ++sink->eventCountTotal;
+   switch (type)
+   {
+      case GST_EVENT_CAPS:
+         ++sink->eventCountCaps;
+         break;
+      case GST_EVENT_TAG:
+         ++sink->eventCountTag;
+         break;
+      #ifdef USE_GST1
+      case GST_EVENT_SEGMENT:
+      #else
+      case GST_EVENT_NEWSEGMENT:
+      #endif
+         ++sink->eventCountSegment;
+         break;
+      case GST_EVENT_STREAM_START:
+         ++sink->eventCountStreamStart;
+         break;
+      case GST_EVENT_STREAM_GROUP_DONE:
+         ++sink->eventCountStreamGroupDone;
+         break;
+      case GST_EVENT_EOS:
+         ++sink->eventCountEos;
+         break;
+      case GST_EVENT_FLUSH_START:
+         ++sink->eventCountFlushStart;
+         break;
+      case GST_EVENT_FLUSH_STOP:
+         ++sink->eventCountFlushStop;
+         break;
+      default:
+         ++sink->eventCountOther;
+         break;
+   }
+   UNLOCK(sink);
+}
+
+static void wstEventCounterDump(GstWesterosSink *sink, const char *reason)
+{
+   guint sessionId;
+   guint64 total;
+   guint64 caps;
+   guint64 tag;
+   guint64 segment;
+   guint64 streamStart;
+   guint64 streamGroupDone;
+   guint64 eos;
+   guint64 flushStart;
+   guint64 flushStop;
+   guint64 other;
+
+   LOCK(sink);
+   sessionId= sink->eventSessionId;
+   total= sink->eventCountTotal;
+   caps= sink->eventCountCaps;
+   tag= sink->eventCountTag;
+   segment= sink->eventCountSegment;
+   streamStart= sink->eventCountStreamStart;
+   streamGroupDone= sink->eventCountStreamGroupDone;
+   eos= sink->eventCountEos;
+   flushStart= sink->eventCountFlushStart;
+   flushStop= sink->eventCountFlushStop;
+   other= sink->eventCountOther;
+   UNLOCK(sink);
+
+   GST_INFO_OBJECT(sink,
+      "WST-EVENT-COUNT summary: session=%u reason=%s total=%" G_GUINT64_FORMAT
+      " caps=%" G_GUINT64_FORMAT
+      " tag=%" G_GUINT64_FORMAT
+      " segment=%" G_GUINT64_FORMAT
+      " stream-start=%" G_GUINT64_FORMAT
+      " stream-group-done=%" G_GUINT64_FORMAT
+      " eos=%" G_GUINT64_FORMAT
+      " flush-start=%" G_GUINT64_FORMAT
+      " flush-stop=%" G_GUINT64_FORMAT
+      " other=%" G_GUINT64_FORMAT,
+      sessionId,
+      (reason ? reason : "unspecified"),
+      total,
+      caps,
+      tag,
+      segment,
+      streamStart,
+      streamGroupDone,
+      eos,
+      flushStart,
+      flushStop,
+      other);
+}
+/*End Event Tracking */
 
 static void shellSurfaceId(void *data,
                            struct wl_simple_shell *wl_simple_shell,
@@ -502,7 +622,6 @@ static void resMgrNotify( EssRMgr *rm, int event, int type, int id, void* userDa
    WstSinkResReqInfo *info= (WstSinkResReqInfo*)userData;
    GstWesterosSink *sink= info->sink;
 
-   GST_DEBUG("resMgrNotify: enter: sink %p", sink);
    switch( type )
    {
       case EssRMgrResType_videoDecoder:
@@ -515,19 +634,12 @@ static void resMgrNotify( EssRMgr *rm, int event, int type, int id, void* userDa
                {
                   GST_ERROR("gst_westeros_sink: resMgrNotify: failed to get caps of assigned decoder");
                }
-               GST_DEBUG("async assigned id %d caps %X (%dx%d)",
-                       sink->resAssignedId,
-                       sink->resCurrCaps.capabilities,
-                       sink->resCurrCaps.info.video.maxWidth,
-                       sink->resCurrCaps.info.video.maxHeight  );
                break;
             case EssRMgrEvent_revoked:
                {
                   memset( &sink->resCurrCaps, 0, sizeof(EssRMgrCaps) );
-                  GST_DEBUG("sink %p releasing video decoder %d", sink, id);
                   sink->releaseResources( sink );
                   EssRMgrReleaseResource( sink->rm, EssRMgrResType_videoDecoder, id );
-                  GST_DEBUG("sink %p done releasing video decoder %d", sink, id);
                   sink->resAssignedId= -1;
                   if (
                        (EssRMgrGetPolicyPriorityTie( sink->rm ) == false) ||
@@ -549,7 +661,6 @@ static void resMgrNotify( EssRMgr *rm, int event, int type, int id, void* userDa
       default:
          break;
    }
-   GST_DEBUG("resMgrNotify: exit: sink %p", sink);
 }
 
 static void resMgrRequestDecoder( GstWesterosSink *sink )
@@ -572,19 +683,12 @@ static void resMgrRequestDecoder( GstWesterosSink *sink )
       {
          if ( sink->resReqPrimary.resReq.assignedId >= 0 )
          {
-            GST_DEBUG("sink %p assigned id %d caps %X", sink, sink->resReqPrimary.resReq.assignedId, sink->resReqPrimary.resReq.assignedCaps );
             sink->resAssignedId= sink->resReqPrimary.resReq.assignedId;
             memset( &sink->resCurrCaps, 0, sizeof(EssRMgrCaps) );
             if ( !EssRMgrResourceGetCaps( sink->rm, EssRMgrResType_videoDecoder, sink->resAssignedId, &sink->resCurrCaps ) )
             {
                GST_ERROR("gst_westeros_sink: resMgrRequestDecoder: failed to get caps of assigned decoder");
             }
-            GST_DEBUG("sink %p assigned id %d caps %X (%dx%d)",
-                      sink,
-                      sink->resAssignedId,
-                      sink->resCurrCaps.capabilities,
-                      sink->resCurrCaps.info.video.maxWidth,
-                      sink->resCurrCaps.info.video.maxHeight  );
          }
          else
          {
@@ -1406,6 +1510,9 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
    WESTEROS_UNUSED(pspec);
    WESTEROS_UNUSED(value);
    WESTEROS_UNUSED(sink);
+   const char *propName = (pspec && pspec->name) ? pspec->name : "unknown";
+   gchar *valStr = g_strdup_value_contents(value); // generic string form of GValue
+   g_free(valStr);
     
    switch (prop_id) 
    {
@@ -1578,6 +1685,8 @@ static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValu
    WESTEROS_UNUSED(pspec); 
    WESTEROS_UNUSED(value);
    WESTEROS_UNUSED(sink);
+
+   const char *propName = (pspec && pspec->name) ? pspec->name : "unknown";
     
    switch (prop_id) 
    {
@@ -1650,8 +1759,11 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
    {
       case GST_STATE_CHANGE_NULL_TO_READY:
       {
-         printf("westeros (sink) version " WESTEROS_SINK_VERSION_FMT "\n", WESTEROS_SINK_VERSION );
+         printf("westeros (sink) version " WESTEROS_VERSION_FMT "\n", WESTEROS_VERSION );
          printf("gst version %d.%d.%d\n", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
+
+         /*For Tracking EVENT */
+         wstEventCounterReset(sink, TRUE, "NULL_TO_READY");
 
          resMgrInit(sink);
          resMgrRequestDecoder(sink);
@@ -1674,6 +1786,7 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
          sink->eosEventSeen= FALSE;
          if ( gst_westeros_sink_backend_ready_to_paused(sink, &passToDefault) )
          {
+            GST_DEBUG("gst_westeros_sink_change_state: READY_TO_PAUSED: sink %p - backend ready to paused - doing display setting", sink);
             sink->rejectPrerollBuffers = !gst_base_sink_is_async_enabled(GST_BASE_SINK(sink));
 
             if ( !sink->display )
@@ -1817,6 +1930,7 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
    {
       case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       {
+         wstEventCounterDump(sink, "PLAYING_TO_PAUSED");
          if ( gst_westeros_sink_backend_playing_to_paused( sink, &passToDefault ) )
          {
             sink->rejectPrerollBuffers = !gst_base_sink_is_async_enabled(GST_BASE_SINK(sink));
@@ -1826,6 +1940,7 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
 
       case GST_STATE_CHANGE_PAUSED_TO_READY:
       {
+         wstEventCounterDump(sink, "PAUSED_TO_READY");
          sink->eosEventSeen= FALSE;
          sink->eosDetected= FALSE;
          if ( gst_westeros_sink_backend_paused_to_ready( sink, &passToDefault ) )
@@ -1845,6 +1960,7 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
 
       case GST_STATE_CHANGE_READY_TO_NULL:
       {
+         wstEventCounterDump(sink, "READY_TO_NULL");
          if ( sink->initialized )
          {
             if ( !gst_westeros_sink_backend_ready_to_null( sink, &passToDefault ) )
@@ -2003,6 +2119,7 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
    }
 
    GST_DEBUG_OBJECT (sink, "sink %p received event %p %" GST_PTR_FORMAT, sink, event, event);
+   wstEventCounterNote(sink, GST_EVENT_TYPE(event));
 
    switch (GST_EVENT_TYPE(event))
    {
@@ -2058,8 +2175,33 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             }
             else
             #endif
+            {
+               /*Backend selecction. SOC/RAW selection to be handled in Paused_to_playing as CAPS EVENT received*/
+               /*Step 1: Need to Know Which Caps Received RAW or SOC*/
+               //GST_DEBUG("USHA: gst_westeros_sink_event: GST_EVENT_CAPS: sink->useRawMode=%d, sink->pathInitialized=%d, sink->sinkMode=%d", sink->useRawMode, sink->pathInitialized, sink->sinkMode);
+               //sink->sinkMode = wstDetectSinkMode( caps );
+               /*Step 2: Now we Get Sink Mode. Need to Handle CAPS now, Till so far both CAPS get set. Now Either change to SOC/RAW*/
+              // if (!sink->pathInitialized)
+               //{
+                 // gboolean useRaw = wstCapsIndicateRaw(caps);
+                   //GST_INFO("CAPS backend decision = %s",
+                   //           useRaw ? "RAW" : "SOC");
+               
+                  /*Now we have one structure and Initialization for SOC and RAW, So No need for TearDown Or RAW, only handling some Parameters */
+                  //if(useRaw && (sink->sinkMode == WST_SINK_MODE_RAW) )
+                 // {
+                 //    sink->useRawMode= TRUE;
+                 // }
+                 // if (sink->sinkMode)
+                 // {
+                 //    sink->pathInitialized = TRUE;
+                 // }
+                 //    GST_DEBUG("USHA: gst_westeros_sink_event: GST_EVENT_CAPS: sink->useRawMode=%d, sink->pathInitialized=%d, sink->sinkMode=%d", sink->useRawMode, sink->pathInitialized, sink->sinkMode);
+               //}
+            }
             if ( sink->passCaps || (!sink->videoStarted && sink->startAfterCaps) )
             {
+               GST_DEBUG("USHA: gst_westeros_sink_event: GST_EVENT_CAPS: calling gst_westeros_sink_soc_accept_caps");
                gst_westeros_sink_soc_accept_caps( sink, caps );
             }
          }
@@ -2278,7 +2420,7 @@ static gboolean gst_westeros_sink_check_caps(GstWesterosSink *sink, GstPad *peer
       result= TRUE;
       goto exit;
    }
-
+   GST_DEBUG("gst_westeros_sink_check_caps: calling gst_westeros_sink_soc_accept_caps");
    if ( !gst_westeros_sink_soc_accept_caps( sink, caps ) )  
    {
       result= FALSE;

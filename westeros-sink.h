@@ -101,6 +101,12 @@ typedef struct _WstSinkTimeCode
    guint seconds;
 } WstSinkTimeCode;
 
+typedef enum _WstSinkMode
+{
+   WST_SINK_MODE_ENCODED = 0,
+   WST_SINK_MODE_RAW
+} WstSinkMode;
+
 #include "westeros-sink-soc.h"
 
 struct _GstWesterosSink
@@ -161,6 +167,19 @@ struct _GstWesterosSink
    
    gboolean eosEventSeen;
    gboolean eosDetected;
+   /*For Event Tracking */
+  guint eventSessionId;
+  guint64 eventCountTotal;
+  guint64 eventCountCaps;
+  guint64 eventCountTag;
+  guint64 eventCountSegment;
+  guint64 eventCountStreamStart;
+  guint64 eventCountStreamGroupDone;
+  guint64 eventCountEos;
+  guint64 eventCountFlushStart;
+  guint64 eventCountFlushStop;
+  guint64 eventCountOther;
+  /*End Event Tracking */
    gint64 startPTS;
    gint64 firstPTS;
    gint64 currentPTS;
@@ -224,6 +243,13 @@ struct _GstWesterosSink
    long long statsLogFirstLogTime;
    long long statsLogLastLogTime;
    int statsLogFrameRenderCountLast;
+
+   /*To Select SOC or Raw specific fields */
+   WstSinkMode sinkMode;
+   
+   /*Flags to Handle DRM Init and SOC TearDown */
+   gboolean isDRMInitDone;
+   gboolean isSOCTearDownDone;
 
    struct _GstWesterosSinkSoc soc;
 };
