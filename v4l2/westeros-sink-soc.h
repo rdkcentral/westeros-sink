@@ -284,6 +284,7 @@ struct _GstWesterosSinkSoc
    WstVideoClientConnection *conn;
    gboolean positionUpdateSuspended;
    int firstSegmentBufferId;
+   int positionSuspendFrameCount;
    int videoX;
    int videoY;
    int videoWidth;

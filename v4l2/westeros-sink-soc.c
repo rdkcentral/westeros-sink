@@ -1063,6 +1063,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevFramePTSGfx= 0;
    sink->soc.positionUpdateSuspended= FALSE;
    sink->soc.firstSegmentBufferId= -1;
+   sink->soc.positionSuspendFrameCount= 0;
    sink->soc.isSourceDTV= FALSE;
    sink->soc.startedOutOfSegment= FALSE;
    sink->soc.videoX= sink->windowX;
@@ -4593,6 +4594,7 @@ static void wstSendFlushVideoClientConnection( WstVideoClientConnection *conn )
          /* Reset position update suspended state on flush - old firstSegmentBufferId is now invalid */
          conn->sink->soc.positionUpdateSuspended= FALSE;
          conn->sink->soc.firstSegmentBufferId= -1;
+         conn->sink->soc.positionSuspendFrameCount= 0;
       }
    }
 }
@@ -5467,6 +5469,7 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                           if ( sink->soc.positionUpdateSuspended && bid == sink->soc.firstSegmentBufferId )
                           {
                              sink->soc.positionUpdateSuspended= FALSE;
+                             sink->soc.positionSuspendFrameCount= 0;
                              GST_DEBUG("First segment buffer %d released, position update resumed", bid);
                           }
                           if ( (bid >= sink->soc.bufferIdOutBase) && (bid < sink->soc.bufferIdOutBase+sink->soc.numBuffersOut) )
@@ -5530,15 +5533,26 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                               if ( sink->soc.positionUpdateSuspended )
                               {
                                  GST_DEBUG("Position update suspended - skipping update for frameTime %lld", frameTime);
-                                 if (sink->soc.frameOutCount > 0 )
+                                 ++sink->soc.positionSuspendFrameCount;
+                                 if ( sink->soc.positionSuspendFrameCount > 60 )
                                  {
-                                    if (sink->soc.frameDisplayCount == 0)
-                                    {
-                                       sink->soc.emitFirstFrameSignal= TRUE;
-                                    }
-                                    ++sink->soc.frameDisplayCount;
+                                    GST_WARNING("positionUpdateSuspended timeout after %d frames - forcing resume", sink->soc.positionSuspendFrameCount);
+                                    sink->soc.positionUpdateSuspended= FALSE;
+                                    sink->soc.positionSuspendFrameCount= 0;
+                                    /* fall through to normal position update */
                                  }
-                                 break;
+                                 else
+                                 {
+                                    if (sink->soc.frameOutCount > 0 )
+                                    {
+                                       if (sink->soc.frameDisplayCount == 0)
+                                       {
+                                          sink->soc.emitFirstFrameSignal= TRUE;
+                                       }
+                                       ++sink->soc.frameDisplayCount;
+                                    }
+                                    break;
+                                 }
                               }
 
                               /*
@@ -6004,6 +6018,7 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
    sink->soc.prevFramePTSGfx= 0;
    sink->soc.positionUpdateSuspended= FALSE;
    sink->soc.firstSegmentBufferId= -1;
+   sink->soc.positionSuspendFrameCount= 0;
    sink->soc.prevFrame1Fd= -1;
    sink->soc.prevFrame2Fd= -1;
    sink->soc.nextFrameFd= -1;
