@@ -466,10 +466,10 @@ typedef unsigned int (*GETSTCINFO)( NEXUS_SimpleStcChannelHandle stc );
 bool checkIndependentVideoClock( GstWesterosSink *sink )
 {
    bool independentClock= false;
-   void *module= dlopen( "libbrcmgstutil.so", RTLD_NOW );
+   void *module= dlopen( "/usr/lib/gstreamer-1.0/libbrcmgstutil.so", RTLD_NOW );
    if (!module)
    {
-       module= dlopen( "libbrcmsystemclock.so", RTLD_NOW );
+       module= dlopen( "/usr/lib/gstreamer-1.0/libbrcmsystemclock.so", RTLD_NOW );
    }
    if ( module )
    {
@@ -501,7 +501,7 @@ void sendVideoFormatChgMsg( GstWesterosSink *sink )
          return;
       }
 
-      void *module= dlopen( "libbrcmgstutil.so", RTLD_NOW );
+      void *module= dlopen( "/usr/lib/gstreamer-1.0/libbrcmgstutil.so", RTLD_NOW );
       if ( module )
       {
          SETFORMATCHANGE setFormatChange= (SETFORMATCHANGE)dlsym( module, "gst_brcm_system_clock_set_format_change_pts" );
@@ -4494,7 +4494,8 @@ static GstPadProbeReturn dataProbe( GstPad *pad, GstPadProbeInfo *info, gpointer
          #endif
          int inSize= 0;
          unsigned char *inData= 0;
-         int i, unitlen;
+         int i;
+         unsigned int unitlen;
 
          #ifdef USE_GST1
          gst_buffer_map(buffer, &map,
@@ -4513,8 +4514,12 @@ static GstPadProbeReturn dataProbe( GstPad *pad, GstPadProbeInfo *info, gpointer
             i= 0;
             while( i < inSize-3 )
             {
-               unitlen= (inData[i+0] << 24) | (inData[i+1] << 16) | (inData[i+2] << 8) | inData[i+3];
+               unitlen= ((unsigned int)inData[i+0] << 24) | ((unsigned int)inData[i+1] << 16) | ((unsigned int)inData[i+2] << 8) | inData[i+3];
                if ( (i == 0) && (unitlen == 1) )
+               {
+                  break;
+               }
+               if ( unitlen > (unsigned int)(inSize - i - 4) )
                {
                   break;
                }

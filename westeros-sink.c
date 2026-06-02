@@ -765,7 +765,7 @@ static void captureInit( GstWesterosSink *sink )
    if ( env )
    {
       GST_DEBUG_OBJECT(sink, "WESTEROSSINK_ENABLE_CAPTURE=(%s)",env);
-      void *module= dlopen( "libmediacapture.so.0.0.0", RTLD_NOW );
+      void *module= dlopen( "/usr/lib/gstreamer-1.0/libmediacapture.so.0.0.0", RTLD_NOW );
       if ( module )
       {
          MediaCaptureCreateContext captureCreateContext= (MediaCaptureCreateContext)dlsym( module, "MediaCaptureCreateContext" );
