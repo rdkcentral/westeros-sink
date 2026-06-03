@@ -2507,6 +2507,15 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    #ifdef USE_GST_AFD
    wstFlushAFDInfo( sink, false );
    #endif
+   /* Re-arm position update suspension after flush/reset.
+    * wstDecoderReset() clears positionUpdateSuspended, but flush always
+    * precedes a segment boundary. Suspend position updates here so that
+    * stale frameTime values from the previous segment (still in the video
+    * server pipeline) cannot corrupt sink->position after the transition. */
+   sink->soc.positionUpdateSuspended= TRUE;
+   sink->soc.firstSegmentBufferId= -1;
+   sink->soc.positionSuspendFrameCount= 0;
+   GST_DEBUG("gst_westeros_sink_soc_flush: position update suspended pending new segment");
    UNLOCK(sink);
 
    pthread_mutex_unlock(&sink->soc.reset_lock);
