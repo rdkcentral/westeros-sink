@@ -25,6 +25,7 @@
 #include <sys/un.h>
 #include <linux/videodev2.h>
 #include <drm/drm_fourcc.h>
+#include <semaphore.h>
 
 #include "simplebuffer-client-protocol.h"
 
@@ -36,7 +37,7 @@
 #undef USE_GENERIC_AVSYNC
 #endif
 
-#define WESTEROS_SINK_CAPS \
+#define WESTEROS_SINK_CAPS_ENCODED \
       "video/x-h264, " \
       "parsed=(boolean) true, " \
       "alignment=(string) au, " \
@@ -47,7 +48,18 @@
       "systemstream = (boolean) false, " \
       "width=(int) [1,MAX], " "height=(int) [1,MAX]" 
 
-typedef struct _WstVideoClientConnection
+#define WESTEROS_SINK_CAPS_RAW \
+      "video/x-raw, " \
+      "format=(string) { NV12, NV21, I420, YU12 }"
+
+      #define WESTEROS_SINK_CAPS \
+      WESTEROS_SINK_CAPS_ENCODED " ; " WESTEROS_SINK_CAPS_RAW
+
+
+#include "westeros-sink-raw.h"
+
+
+struct _WstVideoClientConnection
 {
    GstWesterosSink *sink;
    const char *name;
@@ -55,7 +67,82 @@ typedef struct _WstVideoClientConnection
    int socketFd;
    int serverRefreshRate;
    gint64 serverRefreshPeriod;
-} WstVideoClientConnection;
+   gboolean drmAuthReplyReceived;
+   int drmAuthReplyRc;
+   int drmAuthReplyErr;
+   /*For RAW */
+   #ifdef GLIB_VERSION_2_32
+   GMutex mutex;
+   #else
+   GMutex *mutex;
+   #endif
+};
+
+/*For Raw*/
+#ifdef GLIB_VERSION_2_32
+  #define LOCK_CONN( conn ) g_mutex_lock( &((conn)->mutex) );
+  #define UNLOCK_CONN( conn ) g_mutex_unlock( &((conn)->mutex) );
+#else
+  #define LOCK_CONN( conn ) g_mutex_lock( (conn)->mutex );
+  #define UNLOCK_CONN( conn ) g_mutex_unlock( (conn)->mutex );
+#endif
+#define WST_NUM_DRM_BUFFERS (20)
+#define WST_MAX_PLANE (2)
+typedef struct _WstDrmBuffer
+{
+   int width;
+   int height;
+   int fd[WST_MAX_PLANE];
+   int handle[WST_MAX_PLANE];
+   gsize size[WST_MAX_PLANE];
+   off_t offset[WST_MAX_PLANE];
+   gsize pitch[WST_MAX_PLANE];
+   gint64 frameTime; /* in microseconds */
+   int buffIndex;
+   int frameNumber;
+   int bufferId;
+   bool locked;
+   int lockCount;
+   bool localAlloc;
+   GstBuffer *gstbuf;
+} WstDrmBuffer;
+
+#ifdef USE_GENERIC_AVSYNC
+typedef struct _AVSyncCtrl
+{
+   pthread_mutex_t mutex;
+   long long sysTime;
+   long long avTime;
+   bool active;
+} AVSyncCtrl;
+
+typedef struct _AVSyncCtx
+{
+   int fd;
+   char name[PATH_MAX];
+   int ctrlSize;
+   AVSyncCtrl *ctrl;
+   GstElement *audioSink;
+} AVSyncCtx;
+#endif
+
+#ifdef USE_GST_AFD
+typedef struct _WstAFDInfo
+{
+   gint64 pts;
+   int frameNumber;
+   int spec;
+   int field;
+   int afd;
+   bool haveBar;
+   bool isLetterbox;
+   int f;
+   int d1;
+   int d2;
+} WstAFDInfo;
+#endif
+
+/*For SOC*/
 
 typedef struct _WstPlaneInfo
 {
@@ -116,25 +203,6 @@ typedef struct _WstSWBuffer
 } WstSWBuffer;
 #endif
 
-#ifdef USE_GENERIC_AVSYNC
-typedef struct _AVSyncCtrl
-{
-   pthread_mutex_t mutex;
-   long long sysTime;
-   long long avTime;
-   bool active;
-} AVSyncCtrl;
-
-typedef struct _AVSyncCtx
-{
-   int fd;
-   char name[PATH_MAX];
-   int ctrlSize;
-   AVSyncCtrl *ctrl;
-   GstElement *audioSink;
-} AVSyncCtx;
-#endif
-
 typedef struct _WstPARInfo
 {
    int frameNumber;
@@ -143,74 +211,140 @@ typedef struct _WstPARInfo
    int frameHeight;
 } WstPARInfo;
 
-#ifdef USE_GST_AFD
-typedef struct _WstAFDInfo
+typedef enum _WstSinkMode
 {
-   gint64 pts;
-   int frameNumber;
-   int spec;
-   int field;
-   int afd;
-   bool haveBar;
-   bool isLetterbox;
-   int f;
-   int d1;
-   int d2;
-} WstAFDInfo;
-#endif
+   WST_SINK_MODE_ENCODED = 0,
+   WST_SINK_MODE_RAW
+} WstSinkMode;
 
 struct _GstWesterosSinkSoc
 {
+   /*Common for RAW and SOC */
    struct wl_sb *sb;
-   int activeBuffers;
    double frameRate;
    int frameRateFractionNum;
    int frameRateFractionDenom;
    gboolean frameRateChanged;
    double pixelAspectRatio;
-   WstPARInfo *parNext;
-   int parNextCount;
-   int parNextCapacity;
    gboolean havePixelAspectRatio;
    gboolean pixelAspectRatioChanged;
+   gboolean showChanged;
+   gboolean zoomModeGlobal;
+   int zoomMode;
+   int zoomModeUser;
+   int overscanSize;
+   int frameWidth;
+   int frameHeight;
+   int frameInCount;
+   int frameOutCount;
+   int frameDisplayCount;
+   uint32_t numDropped;
+   gint64 currentInputPTS;
+   gboolean updateSession;
+   int syncType;
+   int sessionId;
+   #ifdef USE_AMLOGIC_MESON_MSYNC
+   gboolean userSession;
+   gboolean userAVSyncMode;
+   int resmFd;
+   #endif
+   int nextFrameFd;
+   int prevFrame1Fd;
+   int prevFrame2Fd;
+   int resubFd;
+
+   gboolean videoPlaying;
+   gboolean videoPaused;
+   gboolean quitEOSDetectionThread;
+   GThread *eosDetectionThread;
+   gboolean quitDispatchThread;
+   GThread *dispatchThread;
+   
+   gboolean emitFirstFrameSignal;
+   gboolean emitUnderflowSignal;
+   gboolean useCaptureOnly;
+   gboolean captureEnabled;
+   gboolean allow4kZoom;
+
+   int hideVideoFramesDelay;
+   int hideGfxFramesDelay;
+   int framesBeforeHideVideo;
+   int framesBeforeHideGfx;
+   gint64 prevFrameTimeGfx;
+   gint64 prevFramePTSGfx;
+   WstVideoClientConnection *conn;
+   int videoX;
+   int videoY;
+   int videoWidth;
+   int videoHeight;
+   int drmFd;
+   uint32_t drmAuthMagic;
+   gboolean haveDrmAuthMagic;
+   gboolean drmAuthenticated;
+   bool renderNode;  /* true when drmFd is a render node (renderD128) -- no DRM auth needed */
+
+   gboolean enableTextureSignal;
+   gboolean forceAspectRatio;
+
+   /*For RAW only */
+   int activeBuffers;
+   uint32_t frameFormatStream;
+   uint32_t frameFormatOut;
+   gboolean haveHardware;
+   gboolean useTunnelled;
+   gboolean expectDummyBuffers;
+
+   int nextDrmBuffer;
+   bool haveDrmBuffSem;
+   sem_t drmBuffSem;
+   GThread *firstFrameThread;
+   GThread *underflowThread;
+   WstDrmBuffer drmBuffer[WST_NUM_DRM_BUFFERS];
+
    #ifdef USE_GST_AFD
+   /*AFD Info for current Frame both RAW and SOC */
    WstAFDInfo afdActive;
+   /*Only for SOC */
    WstAFDInfo *afdInfo;
    int afdInfoCount;
    int afdInfoCapacity;
    #endif
-   gboolean showChanged;
-   gboolean zoomModeGlobal;
+
+   #ifdef USE_GENERIC_AVSYNC
+   AVSyncCtx *avsctx;
+   #endif
+
+   #ifdef GLIB_VERSION_2_32 
+   GMutex mutex;
+   #else
+   GMutex *mutex;
+   #endif
+
+   /* For SOC only */
+   WstPARInfo *parNext;
+   int parNextCount;
+   int parNextCapacity;
+
+
    gboolean useImmediateOutput;
    gboolean lowLatencyMode;
    gboolean keepLastFrame;
    gboolean keepLastFrameChanged;
    gboolean isSourceDTV;
    gboolean startedOutOfSegment;
-   int zoomMode;
-   int zoomModeUser;
-   int overscanSize;
-   int frameWidth;
-   int frameHeight;
    int frameWidthStream;
    int frameHeightStream;
-   int frameInCount;
-   int frameOutCount;
    int frameDecodeCount;
-   int frameDisplayCount;
    gboolean expectNoLastFrame;
    int decoderLastFrame;
    int decoderEOS;
-   uint32_t numDropped;
    uint32_t inputFormat;
    uint32_t outputFormat;
    gboolean interlaced;
    gint64 prevDecodedTimestamp;
-   gint64 currentInputPTS;
    gint64 videoDecodeStartTime;
 
    char *devname;
-   gboolean enableTextureSignal;
    gboolean enableDecodeErrorSignal;
    int v4l2Fd;
    struct v4l2_capability caps;
@@ -226,15 +360,7 @@ struct _GstWesterosSinkSoc
    struct v4l2_format fmtIn;
    struct v4l2_format fmtOut;
    gboolean formatsSet;
-   gboolean updateSession;
    gboolean codecChange;
-   int syncType;
-   int sessionId;
-   #ifdef USE_AMLOGIC_MESON_MSYNC
-   gboolean userSession;
-   gboolean userAVSyncMode;
-   int resmFd;
-   #endif
    int bufferCohort;
    uint32_t minBuffersIn;
    uint32_t minBuffersOut;
@@ -246,46 +372,20 @@ struct _GstWesterosSinkSoc
    int bufferIdOutBase;
    WstBufferInfo *outBuffers;
 
-   int nextFrameFd;
-   int prevFrame1Fd;
-   int prevFrame2Fd;
-   int resubFd;
-
-   gboolean videoPlaying;
-   gboolean videoPaused;
    gboolean videoServerPaused;
    gboolean hasEvents;
    gboolean hasEOSEvents;
    gboolean needCaptureRestart;
-   gboolean emitFirstFrameSignal;
-   gboolean emitUnderflowSignal;
    gboolean decodeError;
    gboolean quitVideoOutputThread;
    GThread *videoOutputThread;
-   gboolean quitEOSDetectionThread;
-   GThread *eosDetectionThread;
-   gboolean quitDispatchThread;
-   GThread *dispatchThread;
 
-   gboolean useCaptureOnly;
-   gboolean captureEnabled;
+
    gboolean frameAdvance;
    gboolean pauseException;
    gboolean pauseGetGfxFrame;
    gboolean useGfxSync;
-   gboolean allow4kZoom;
    int pauseGfxBuffIndex;
-   int hideVideoFramesDelay;
-   int hideGfxFramesDelay;
-   int framesBeforeHideVideo;
-   int framesBeforeHideGfx;
-   gint64 prevFrameTimeGfx;
-   gint64 prevFramePTSGfx;
-   WstVideoClientConnection *conn;
-   int videoX;
-   int videoY;
-   int videoWidth;
-   int videoHeight;
 
    guint8 *codecData;
    int codecDataLen;
@@ -304,19 +404,24 @@ struct _GstWesterosSinkSoc
    GstBuffer *prerollBuffer;
    GstBuffer *lastBuffer;
    gboolean frameStepOnPreroll;
-   gboolean forceAspectRatio;
 
    gboolean lowMemoryMode;
    gboolean secureVideo;
    gboolean useDmabufOutput;
    int dwMode;
-   int drmFd;
+
+   /*To Select SOC or Raw specific fields */
+   WstSinkMode sinkMode;
+
+   gboolean isAcceptCapsDone;
+   gboolean isReadytoPausedDone;
+
+   /*Flags to Handle DRM Init*/
+   gboolean isDRMInitDone;
+   void         *bufAllocConn; 
+
 
    void *svp;
-
-   #ifdef USE_GENERIC_AVSYNC
-   AVSyncCtx *avsctx;
-   #endif
 
    #ifdef USE_GST1
    GstPadChainFunction chainOrg;
@@ -327,12 +432,6 @@ struct _GstWesterosSinkSoc
    int nextSWBuffer;
    WstSWBuffer swBuffer[WST_NUM_SW_BUFFERS];
    gboolean swPrerolled;
-   #endif
-
-   #ifdef GLIB_VERSION_2_32 
-   GMutex mutex;
-   #else
-   GMutex *mutex;
    #endif
 
    pthread_mutex_t reset_lock;
@@ -364,6 +463,7 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink );
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath );
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink );
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query );
-
+WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink *sink, const char *name );
+void wstDestroyVideoClientConnection( WstVideoClientConnection *conn );
 #endif
 
