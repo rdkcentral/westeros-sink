@@ -950,6 +950,7 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
    klass->canUseResMgr= 0;
    {
       const char *env= getenv("WESTEROS_SINK_USE_ESSRMGR");
+      GST_WARNING_OBJECT(klass, "USHA: WESTEROS_SINK_USE_ESSRMGR=%s", env?env:"<not set>");
       if ( env && (atoi(env) != 0) )
       {
          klass->canUseResMgr= 1;
@@ -1393,6 +1394,7 @@ void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
 {
+   GST_WARNING_OBJECT(object, "USHA: gst_westeros_sink_soc_set_property called for prop_id %d", prop_id);
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
 
    WESTEROS_UNUSED(pspec);
@@ -1792,9 +1794,19 @@ static gboolean wstSocEnsureReadyToPausedInitialized( GstWesterosSink *sink )
             UNLOCK(sink);
             return FALSE;
          }
+         /* FLOW 1: useCaptureOnly=false && no connection exists - Create connection and authenticate */
          if ( !sink->soc.useCaptureOnly && !sink->soc.conn )
          {
             sink->soc.conn= wstCreateVideoClientConnection( sink, DEFAULT_VIDEO_SERVER );
+            if ( sink->soc.conn && !sink->soc.drmAuthenticated )
+            {
+               if ( !wstAuthenticateVideoClientConnection( sink->soc.conn ) )
+               {
+                  GST_ERROR("unable to authenticate DRM client with video server");
+                  wstDestroyVideoClientConnection( sink->soc.conn );
+                  sink->soc.conn= 0;
+               }
+            }
             if ( !sink->soc.conn )
             {
                GST_ERROR("unable to connect to video server (%s)", DEFAULT_VIDEO_SERVER );
@@ -2987,6 +2999,7 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
          /* Use nominal display size provided to us by
          * the compositor to calculate the video bounds
          * we should use when we transition to graphics path. */
+        GST_WARNING("USHA: gst_westeros_sink_soc_set_video_path: calculating video bounds");
          int vx, vy, vw, vh;
          wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
          wstSetTextureCrop( sink, vx, vy, vw, vh );
@@ -6155,6 +6168,7 @@ static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, i
             vh= sink->soc.videoHeight;
             if ( needBounds(sink) )
             {
+               GST_WARNING("USHA: wstSendFrameVideoClientConnection: needBounds true, get video bounds from compositor vx: %d vy: %d vw: %d vh: %d", vx, vy, vw, vh);
                wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, true );
             }
 
@@ -6510,6 +6524,9 @@ static void wstGetVideoBounds(GstWesterosSink *sink, int *x, int *y, int *w, int
    oy = sink->windowY;
    ow = sink->windowWidth;
    oh = sink->windowHeight;
+   GST_WARNING("USHA: wstGetVideoBounds: videoX %d videoY %d videoWidth %d videoHeight %d", vx, vy, vw, vh);
+   GST_WARNING("USHA: wstGetVideoBounds: WindowX %d WindowY %d WindowWidth %d WindowHeight %d", ox, oy, ow, oh);
+
    if (sink->soc.pixelAspectRatioChanged || !actualVideoPlacement) GST_INFO("pixelAspectRatio: %f zoom-mode %d overscan-size %d actualVideoPlacement %d", sink->soc.pixelAspectRatio, sink->soc.zoomMode, sink->soc.overscanSize, actualVideoPlacement);
    contentWidth = sink->soc.frameWidth * sink->soc.pixelAspectRatio;
    contentHeight = sink->soc.frameHeight;
@@ -6712,11 +6729,13 @@ static void wstGetVideoBounds(GstWesterosSink *sink, int *x, int *y, int *w, int
         *y = vy;
         *w = vw;
         *h = vh;
+        GST_WARNING("USHA: wstGetVideoBounds: Exit vx %d vy %d vw %d vh %d", vx, vy, vw, vh);
     } else {
         *x = ox;
         *y = oy;
         *w = ow;
         *h = oh;
+        GST_WARNING("USHA: wstGetVideoBounds: Exit ox %d oy %d ow %d oh %d", ox, oy, ow, oh);
     }
 }
 

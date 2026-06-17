@@ -316,24 +316,34 @@ static void outputHandleMode( void *data,
                               int refreshRate )
 {
    GstWesterosSink *sink= (GstWesterosSink*)data;
-
+   g_print("USHA: outputHandleMode: flags=%d width=%d height=%d refreshRate=%d\n", flags, width, height, refreshRate);
+   GST_WARNING_OBJECT(sink, "USHA: outputHandleMode: flags=%d width=%d height=%d refreshRate=%d\n", flags, width, height, refreshRate);
    if ( flags & WL_OUTPUT_MODE_CURRENT )
    {
       LOCK( sink );
       sink->displayWidth= width;
       sink->displayHeight= height;
+      g_print("USHA: outputHandleMode: displayWidth=%d displayHeight=%d\n", sink->displayWidth, sink->displayHeight);
+      GST_WARNING_OBJECT(sink, "USHA: outputHandleMode: displayWidth=%d displayHeight=%d\n", sink->displayWidth, sink->displayHeight);
       if ( !sink->windowSizeOverride )
       {
          printf("westeros-sink: compositor sets window to (%dx%d)\n", width, height);
+         g_print("USHA: outputHandleMode: compositor sets window to (%dx%d)\n", width, height); 
+         GST_WARNING_OBJECT(sink, "USHA: outputHandleMode: compositor sets window to (%dx%d)\n", width, height);
          sink->windowWidth= width;
          sink->windowHeight= height;
          if ( sink->vpcSurface )
          {
+            g_print("USHA: outputHandleMode: wl_vpc_surface_set_geometry: windowX=%d windowY=%d windowWidth=%d windowHeight=%d\n", sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
+            GST_WARNING_OBJECT(sink, "USHA: outputHandleMode: wl_vpc_surface_set_geometry: windowX=%d windowY=%d windowWidth=%d windowHeight=%d\n", sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
             wl_vpc_surface_set_geometry( sink->vpcSurface, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight );
          }
       }
       UNLOCK( sink );
    }
+   g_print("USHA: outputHandleMode: Exit displayWidth=%d displayHeight=%d\n", sink->displayWidth, sink->displayHeight);
+   GST_WARNING_OBJECT(sink, "USHA: outputHandleMode: Exit displayWidth=%d displayHeight=%d\n", sink->displayWidth, sink->displayHeight);
+
 }
 
 static void outputHandleDone( void *data,
@@ -1270,7 +1280,9 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    sink->windowY= DEFAULT_WINDOW_Y;
    sink->windowWidth= DEFAULT_WINDOW_WIDTH;
    sink->windowHeight= DEFAULT_WINDOW_HEIGHT;
+   GST_DEBUG("sink init: window %d,%d %dx%d", sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
    sink->show= true;
+   
    sink->windowSet= false;
    sink->windowChange= false;
    sink->windowSizeOverride= false;
@@ -1401,6 +1413,8 @@ static void gst_westeros_sink_finalize(GObject *object)
 
 static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) 
 {
+   GST_WARNING_OBJECT(object, "USHA: gst_westeros_sink_set_property with property id: %d enter", prop_id);
+   g_print("USHA: gst_westeros_sink_set_property with property id: %d enter\n", prop_id);
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
   
    WESTEROS_UNUSED(pspec);
@@ -1412,6 +1426,8 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
       case PROP_WINDOW_SET:
       {
          const gchar *str= g_value_get_string(value);
+         GST_WARNING_OBJECT(object, "USHA: PROP_WINDOW_SET raw string: %s", (str ? str : "(null)"));
+         g_print("USHA: PROP_WINDOW_SET raw string: %s\n", (str ? str : "(null)"));
          gchar **parts= g_strsplit(str, ",", 4);
          
          if ( !parts[0] || !parts[1] || !parts[2] || !parts[3] )
@@ -1426,6 +1442,8 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
             nw= atoi( parts[2] );
             nh= atoi( parts[3] );
 
+            GST_WARNING_OBJECT(object, "USHA: PROP_WINDOW_SET parsed values: x=%d y=%d w=%d h=%d", nx, ny, nw, nh);
+            g_print("USHA: PROP_WINDOW_SET parsed values: x=%d y=%d w=%d h=%d\n", nx, ny, nw, nh);
             if ( (sink->windowSet == false) ||
                  (nx != sink->windowX) ||
                  (ny != sink->windowY) ||
@@ -1445,7 +1463,27 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
                   sink->windowSizeOverride= true;
                }
 
-               printf("gst_westeros_sink_set_property set window rect (%d,%d,%d,%d)\n",
+               GST_WARNING_OBJECT(object, "USHA: PROP_WINDOW_SET applied: windowX=%d windowY=%d windowWidth=%d windowHeight=%d windowSizeOverride=%d",
+                           sink->windowX,
+                           sink->windowY,
+                           sink->windowWidth,
+                           sink->windowHeight,
+                           sink->windowSizeOverride);
+               g_print("USHA: PROP_WINDOW_SET applied: windowX=%d windowY=%d windowWidth=%d windowHeight=%d windowSizeOverride=%d\n",
+                           sink->windowX,
+                           sink->windowY,
+                           sink->windowWidth,
+                           sink->windowHeight,
+                           sink->windowSizeOverride);
+
+               GST_WARNING_OBJECT(object, "USHA: PROP_WINDOW_SET : windowX=%d windowY=%d windowWidth=%d windowHeight=%d windowSizeOverride=%d",
+                           sink->windowX,
+                           sink->windowY,
+                           sink->windowWidth,
+                           sink->windowHeight,
+                           sink->windowSizeOverride);
+
+               g_print("gst_westeros_sink_set_property set window rect (%d,%d,%d,%d)\n",
                        sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight );
 
                if ( sink->vpcSurface )
@@ -1478,6 +1516,8 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
       case PROP_ZORDER:
       {
          sink->zorder= g_value_get_float(value);
+         GST_WARNING_OBJECT(object, "USHA: PROP_ZORDER set to %f", sink->zorder);
+         g_print("USHA: PROP_ZORDER set to %f\n", sink->zorder);
          if ( sink->shell )
          {
             wl_fixed_t z= wl_fixed_from_double(sink->zorder);
@@ -1489,6 +1529,8 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
       case PROP_OPACITY:
       {
          sink->opacity= g_value_get_float(value);
+         GST_WARNING_OBJECT(object, "USHA: PROP_OPACITY set to %f", sink->opacity);
+         g_print("USHA: PROP_OPACITY set to %f\n", sink->opacity);
          if ( sink->shell )
          {
             wl_fixed_t op= wl_fixed_from_double(sink->opacity);
@@ -1569,10 +1611,14 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
          gst_westeros_sink_soc_set_property(object, prop_id, value, pspec);
          break;
    }
+   GST_WARNING_OBJECT(object, "USHA: gst_westeros_sink_set_property with property id: %d exit", prop_id);
+   g_print("USHA: gst_westeros_sink_set_property with property id: %d exit\n", prop_id);
 }
 
 static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) 
 {
+   GST_WARNING_OBJECT(object, "USHA: gst_westeros_sink_get_property with property id: %d enter", prop_id);
+   g_print("USHA: gst_westeros_sink_get_property with property id: %d enter\n", prop_id);
    GstWesterosSink *sink = GST_WESTEROS_SINK(object);
   
    WESTEROS_UNUSED(pspec); 
@@ -1583,16 +1629,24 @@ static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValu
    {
       case PROP_VIDEO_WIDTH:
          {
+            int width;
             LOCK(sink);
-            g_value_set_int(value, sink->srcWidth);
+            width= sink->srcWidth;
             UNLOCK(sink);
+            g_value_set_int(value, width);
+            GST_WARNING("USHA: PROP_VIDEO_WIDTH: srcWidth=%d", width);
+            g_print("USHA: PROP_VIDEO_WIDTH: srcWidth=%d\n", width);
          }
          break;
       case PROP_VIDEO_HEIGHT:
          {
+            int height;
             LOCK(sink);
-            g_value_set_int(value, sink->srcHeight);
+            height= sink->srcHeight;
             UNLOCK(sink);
+            g_value_set_int(value, height);
+            GST_WARNING("USHA: PROP_VIDEO_HEIGHT: srcHeight=%d", height);
+            g_print("USHA: PROP_VIDEO_HEIGHT: srcHeight=%d\n", height);
          }
          break;
       case PROP_ENABLE_TIMECODE:
@@ -1626,6 +1680,8 @@ static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValu
          gst_westeros_sink_soc_get_property(object, prop_id, value, pspec);
          break;
    }
+GST_WARNING_OBJECT(object, "USHA: gst_westeros_sink_get_property with property id: %d exit", prop_id);
+g_print("USHA: gst_westeros_sink_get_property with property id: %d exit\n", prop_id);
 }
 
 static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, GstStateChange transition)

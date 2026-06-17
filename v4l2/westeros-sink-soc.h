@@ -67,6 +67,9 @@ struct _WstVideoClientConnection
    int socketFd;
    int serverRefreshRate;
    gint64 serverRefreshPeriod;
+   gboolean drmAuthReplyReceived;
+   int drmAuthReplyRc;
+   int drmAuthReplyErr;
    /*For RAW */
    #ifdef GLIB_VERSION_2_32
    GMutex mutex;
@@ -275,6 +278,10 @@ struct _GstWesterosSinkSoc
    int videoWidth;
    int videoHeight;
    int drmFd;
+   uint32_t drmAuthMagic;
+   gboolean haveDrmAuthMagic;
+   gboolean drmAuthenticated;
+   bool renderNode;  /* true when drmFd is a render node (renderD128) -- no DRM auth needed */
 
    gboolean enableTextureSignal;
    gboolean forceAspectRatio;
@@ -457,5 +464,6 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink );
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query );
 WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink *sink, const char *name );
 void wstDestroyVideoClientConnection( WstVideoClientConnection *conn );
+bool wstAuthenticateVideoClientConnection( WstVideoClientConnection *conn );
 #endif
 

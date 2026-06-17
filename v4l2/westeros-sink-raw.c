@@ -98,6 +98,7 @@ static void wstSendPauseVideoClientConnection( WstVideoClientConnection *conn, b
 
 static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendRateVideoClientConnection( WstVideoClientConnection *conn );
+void wstProcessMessagesVideoClientConnectionRaw( WstVideoClientConnection *conn );
 
 bool wstSendFrameVideoClientConnectionRaw( WstVideoClientConnection *conn, int buffIndex );
 static unsigned int getU32( unsigned char *p );
@@ -163,35 +164,60 @@ static gint64 getGstClockTime( GstWesterosSink *sink )
    return time;
 }
 
+static guint wstResolveSignalId( GstWesterosSink *sink, int signalIndex, const char *signalName )
+{
+   guint sid= 0;
+
+   if ( !sink || !signalName || (signalIndex < 0) || (signalIndex >= MAX_SIGNAL) )
+   {
+      return 0;
+   }
+
+   sid= g_signals[signalIndex];
+   if ( sid == 0 )
+   {
+      sid= g_signal_lookup( signalName, G_OBJECT_TYPE(sink) );
+      if ( sid != 0 )
+      {
+            g_signals[signalIndex]= sid;
+         }
+      }
+
+   return sid;
+}
 static unsigned int getU32( unsigned char *p )
 {
-   unsigned int n= (unsigned int)p[0]
-                 | ((unsigned int)p[1] << 8)
-                 | ((unsigned int)p[2] << 16)
-                 | ((unsigned int)p[3] << 24);
+   unsigned n;
+
+   n= (p[0]<<24)|(p[1]<<16)|(p[2]<<8)|(p[3]);
+
    return n;
 }
 
 static int putU32( unsigned char *p, unsigned n )
 {
-   p[0]= n & 0xFF;
-   p[1]= (n >> 8) & 0xFF;
-   p[2]= (n >> 16) & 0xFF;
-   p[3]= (n >> 24) & 0xFF;
+   p[0]= (n>>24);
+   p[1]= (n>>16);
+   p[2]= (n>>8);
+   p[3]= (n&0xFF);
+
    return 4;
 }
 
 static gint64 getS64( unsigned char *p )
 {
-   guint64 n= ((guint64)p[0])
-            | (((guint64)p[1]) << 8)
-            | (((guint64)p[2]) << 16)
-            | (((guint64)p[3]) << 24)
-            | (((guint64)p[4]) << 32)
-            | (((guint64)p[5]) << 40)
-            | (((guint64)p[6]) << 48)
-            | (((guint64)p[7]) << 56);
-   return (gint64)n;
+   gint64 n;
+
+   n= ((((gint64)(p[0]))<<56) |
+       (((gint64)(p[1]))<<48) |
+       (((gint64)(p[2]))<<40) |
+       (((gint64)(p[3]))<<32) |
+       (((gint64)(p[4]))<<24) |
+       (((gint64)(p[5]))<<16) |
+       (((gint64)(p[6]))<<8) |
+       (p[7]) );
+
+   return n;
 }
 
 static int putS64( unsigned char *p, gint64 n )
@@ -381,36 +407,6 @@ gboolean gst_westeros_sink_raw_resource_init( GstWesterosSink *sink, gboolean *p
    return result;
 }
 
-gboolean gst_westeros_sink_raw_video_client_connection( GstWesterosSink *sink, gboolean *passToDefault )
-{
-   WESTEROS_UNUSED(passToDefault);
-
-   if ( !sink->soc.useCaptureOnly )
-   {
-      sink->soc.conn= wstCreateVideoClientConnection( sink, DEFAULT_VIDEO_SERVER );
-      if ( !sink->soc.conn )
-      {
-         GST_ERROR("unable to connect to video server (%s)", DEFAULT_VIDEO_SERVER );
-         sink->soc.useCaptureOnly= TRUE;
-         sink->soc.captureEnabled= TRUE;
-         printf("westeros-sink: no video server - capture only\n");
-         if ( sink->vpc )
-         {
-            wl_vpc_destroy( sink->vpc );
-            sink->vpc= 0;
-         }
-      }
-   }
-
-   LOCK(sink);
-   sink->startAfterCaps= TRUE;
-   sink->soc.videoPlaying= TRUE;
-   sink->soc.videoPaused= FALSE;
-   UNLOCK(sink);
-
-   return TRUE;
-}
-
 gboolean gst_westeros_sink_raw_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
 {
    WESTEROS_UNUSED(passToDefault);
@@ -555,7 +551,7 @@ gboolean gst_westeros_sink_raw_setting_capabilities( GstWesterosSink *sink, GstC
          {
             sink->soc.frameFormatStream= DRM_FORMAT_NV21;
          }
-         else if ( (len == 4) && !strncmp( format, "I420", len) )
+         else if ( (len == 4) && (!strncmp( format, "I420", len) || !strncmp( format, "YU12", len)) )
          {
             sink->soc.frameFormatStream= DRM_FORMAT_YUV420;
          }
@@ -730,7 +726,6 @@ void gst_westeros_sink_raw_render( GstWesterosSink *sink, GstBuffer *buffer )
          #endif
 
          GST_LOG("gst_westeros_sink_raw_render: buffer %p, len %d timestamp: %lld", buffer, inSize, GST_BUFFER_PTS(buffer) );
-
          drmBuff= drmGetBuffer( sink, sink->soc.frameWidth, sink->soc.frameHeight );
       }
 
@@ -1029,7 +1024,6 @@ void gst_westeros_sink_raw_render( GstWesterosSink *sink, GstBuffer *buffer )
 
                      binfo->sink= sink;
                      binfo->buffIndex= buffIndex;
-
                      wlbuff= wl_sb_create_planar_buffer_fd2( sink->soc.sb,
                                                              fd0,
                                                              fd1,
@@ -1099,7 +1093,6 @@ void gst_westeros_sink_raw_render( GstWesterosSink *sink, GstBuffer *buffer )
                      sink->soc.prevFrame2Fd= sink->soc.prevFrame1Fd;
                      sink->soc.prevFrame1Fd= sink->soc.nextFrameFd;
                      sink->soc.nextFrameFd= sink->soc.drmBuffer[buffIndex].fd[0];
-
                      if ( wstSendFrameVideoClientConnectionRaw( sink->soc.conn, buffIndex ) )
                      {
                         buffIndex= -1;
@@ -1207,6 +1200,7 @@ void gst_westeros_sink_raw_set_video_path( GstWesterosSink *sink, bool useGfxPat
             vw= sink->soc.videoWidth;
             vh= sink->soc.videoHeight;
          }
+         GST_WARNING("USHA: gst_westeros_sink_raw_set_video_path: sending westeros-raw-rectangle event %d,%d %dx%d", vx, vy, vw, vh);
          structure= gst_structure_new("westeros-raw-rectangle",
                                       "res-width", G_TYPE_UINT, sink->displayWidth,
                                       "res-height", G_TYPE_UINT, sink->displayHeight,
@@ -1232,6 +1226,7 @@ void gst_westeros_sink_raw_set_video_path( GstWesterosSink *sink, bool useGfxPat
    }
    if ( needBounds(sink) && sink->vpcSurface )
    {
+      GST_WARNING("USHA: gst_westeros_sink_raw_set_video_path: needBounds TRUE");
       /* Use nominal display size provided to us by
        * the compositor to calculate the video bounds
        * we should use when we transition to graphics path.
@@ -1247,6 +1242,10 @@ void gst_westeros_sink_raw_set_video_path( GstWesterosSink *sink, bool useGfxPat
       sink->soc.videoWidth= sink->windowWidth;
       sink->soc.videoHeight= sink->windowHeight;
 
+      GST_WARNING("USHA: video bounds updated: %d,%d %dx%d", sink->soc.videoX, sink->soc.videoY, sink->soc.videoWidth, sink->soc.videoHeight);
+      GST_WARNING("USHA: video bounds updated: %d,%d %dx%d", tx, ty, tw, th);
+      GST_WARNING("USHA: video bounds updated: %d,%d %dx%d", sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
+      GST_WARNING("USHA:  calling wstGetVideoBoundsRaw with %d,%d %dx%d", sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
       wstGetVideoBoundsRaw( sink, &vx, &vy, &vw, &vh );
       wstSetTextureCropRaw( sink, vx, vy, vw, vh );
 
@@ -1254,6 +1253,7 @@ void gst_westeros_sink_raw_set_video_path( GstWesterosSink *sink, bool useGfxPat
       sink->soc.videoY= ty;
       sink->soc.videoWidth= tw;
       sink->soc.videoHeight= th;
+      GST_WARNING("USHA: video bounds restored: %d,%d %dx%d", sink->soc.videoX, sink->soc.videoY, sink->soc.videoWidth, sink->soc.videoHeight);
    }
 }
 
@@ -1411,6 +1411,7 @@ void wstSinkRawStopVideo( GstWesterosSink *sink )
 
 void wstGetVideoBoundsRaw( GstWesterosSink *sink, int *x, int *y, int *w, int *h )
 {
+   GST_WARNING("USHA: wstGetVideoBoundsRaw: Enter");
    int vx, vy, vw, vh;
    int frameWidth, frameHeight;
    int zoomMode;;
@@ -1422,6 +1423,8 @@ void wstGetVideoBoundsRaw( GstWesterosSink *sink, int *x, int *y, int *w, int *h
    vy= sink->soc.videoY;
    vw= sink->soc.videoWidth;
    vh= sink->soc.videoHeight;
+   GST_WARNING("USHA: wstGetVideoBoundsRaw: videoX %d videoY %d videoWidth %d videoHeight %d", vx, vy, vw, vh);
+
    if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("pixelAspectRatio: %f zoom-mode %d overscan-size %d", sink->soc.pixelAspectRatio, sink->soc.zoomMode, sink->soc.overscanSize );
    frameWidth= sink->soc.frameWidth;
    frameHeight= sink->soc.frameHeight;
@@ -1436,6 +1439,7 @@ void wstGetVideoBoundsRaw( GstWesterosSink *sink, int *x, int *y, int *w, int *h
    roiy= 0;
    roiw= contentWidth;
    roih= contentHeight;
+   GST_WARNING("USHA: wstGetVideoBoundsRaw: ROI x %f y %f w %f h %f", roix, roiy, roiw, roih);
 
    zoomMode= sink->soc.zoomMode;
    if ( !sink->soc.allow4kZoom &&
@@ -1596,13 +1600,21 @@ void wstGetVideoBoundsRaw( GstWesterosSink *sink, int *x, int *y, int *w, int *h
       {
          if ( sink->soc.captureEnabled || sink->soc.framesBeforeHideGfx )
          {
+            GST_WARNING("USHA: wstGetVideoBoundsRaw: setting geometry vx %d vy %d vw %d vh %d", vx, vy, vw, vh);
             wl_vpc_surface_set_geometry( sink->vpcSurface, vx, vy, vw, vh );
          }
          else
          {
+            GST_WARNING("USHA: wstGetVideoBoundsRaw: setting geometry windowX %d windowY %d windowWidth %d windowHeight %d", sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
             wl_vpc_surface_set_geometry( sink->vpcSurface, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight );
          }
          wl_display_flush(sink->display);
+      }
+      else
+      {
+         GST_WARNING("wstGetVideoBoundsRaw: pixelAspectRatioChanged but display %p vpcSurface %p",
+                      sink->display,
+                      sink->vpcSurface);
       }
    }
    sink->soc.pixelAspectRatioChanged= FALSE;
@@ -1610,10 +1622,14 @@ void wstGetVideoBoundsRaw( GstWesterosSink *sink, int *x, int *y, int *w, int *h
    *y= vy;
    *w= vw;
    *h= vh;
+   GST_WARNING("USHA: wstGetVideoBoundsRaw: Exit vx %d vy %d vw %d vh %d", vx, vy, vw, vh);
 }
 
 void wstSetTextureCropRaw( GstWesterosSink *sink, int vx, int vy, int vw, int vh )
 {
+   GST_WARNING("USHA: wstSetTextureCropRaw: Enter");
+   GST_WARNING("USHA: wstSetTextureCropRaw: vx %d vy %d vw %d vh %d window(%d, %d, %d, %d) display(%dx%d)",
+             vx, vy, vw, vh, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight, sink->displayWidth, sink->displayHeight);
    GST_DEBUG("wstSetTextureCropRaw: vx %d vy %d vw %d vh %d window(%d, %d, %d, %d) display(%dx%d)",
              vx, vy, vw, vh, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight, sink->displayWidth, sink->displayHeight);
    if ( (sink->displayWidth != -1) && (sink->displayHeight != -1) &&
@@ -2166,6 +2182,7 @@ static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn )
       vy= sink->soc.videoY;
       vw= sink->soc.videoWidth;
       vh= sink->soc.videoHeight;
+      GST_WARNING("USHA: wstSendRectVideoClientConnection: Enter vx %d vy %d vw %d vh %d", vx, vy, vw, vh);
       if ( needBounds(sink) )
       {
          wstGetVideoBoundsRaw( sink, &vx, &vy, &vw, &vh );
@@ -2254,6 +2271,128 @@ static void wstSendRateVideoClientConnection( WstVideoClientConnection *conn )
    }
 }
 
+bool wstAuthenticateVideoClientConnection( WstVideoClientConnection *conn )
+{
+   bool result= false;
+
+   if ( conn )
+   {
+      GstWesterosSink *sink= conn->sink;
+      struct msghdr msg;
+      struct iovec iov[1];
+      struct pollfd pfd;
+      unsigned char mbody[8];
+      int len;
+      int sentLen;
+      int rc;
+      int attempts;
+
+      if ( !sink->soc.haveDrmAuthMagic )
+      {
+         GST_ERROR("wstAuthenticateVideoClientConnection: no DRM auth magic available");
+         goto exit;
+      }
+
+      conn->drmAuthReplyReceived= FALSE;
+      conn->drmAuthReplyRc= -1;
+      conn->drmAuthReplyErr= 0;
+
+      LOCK_CONN( conn );
+      msg.msg_name= NULL;
+      msg.msg_namelen= 0;
+      msg.msg_iov= iov;
+      msg.msg_iovlen= 1;
+      msg.msg_control= 0;
+      msg.msg_controllen= 0;
+      msg.msg_flags= 0;
+
+      len= 0;
+      mbody[len++]= 'V';
+      mbody[len++]= 'S';
+      mbody[len++]= 5;
+      mbody[len++]= 'O';
+      mbody[len++]= (sink->soc.drmAuthMagic >> 24) & 0xFF;
+      mbody[len++]= (sink->soc.drmAuthMagic >> 16) & 0xFF;
+      mbody[len++]= (sink->soc.drmAuthMagic >> 8) & 0xFF;
+      mbody[len++]= sink->soc.drmAuthMagic & 0xFF;
+	  
+	  GST_WARNING("drmAuthMagic: dec=%u hex=0x%08X",
+            (unsigned int)sink->soc.drmAuthMagic,
+            (unsigned int)sink->soc.drmAuthMagic);
+
+      iov[0].iov_base= (char*)mbody;
+      iov[0].iov_len= len;
+
+      do
+      {
+         sentLen= sendmsg( conn->socketFd, &msg, MSG_NOSIGNAL );
+      }
+      while ( (sentLen < 0) && (errno == EINTR));
+      UNLOCK_CONN( conn );
+
+      if ( sentLen != len )
+      {
+         GST_ERROR("wstAuthenticateVideoClientConnection: send auth request failed: errno %d", errno);
+         goto exit;
+      }
+
+      pfd.fd= conn->socketFd;
+      pfd.events= POLLIN;
+      pfd.revents= 0;
+
+      for( attempts= 0; attempts < 20; ++attempts )
+      {
+         do
+         {
+            rc= poll( &pfd, 1, 100 );
+         }
+         while ( (rc < 0) && (errno == EINTR) );
+
+         if ( rc < 0 )
+         {
+            GST_ERROR("wstAuthenticateVideoClientConnection: poll failed: errno %d", errno);
+            goto exit;
+         }
+         if ( rc == 0 )
+         {
+            continue;
+         }
+         if ( pfd.revents & (POLLERR|POLLHUP|POLLNVAL) )
+         {
+            GST_ERROR("wstAuthenticateVideoClientConnection: socket error revents 0x%x", pfd.revents);
+            goto exit;
+         }
+         if ( pfd.revents & POLLIN )
+         {
+            wstProcessMessagesVideoClientConnectionRaw( conn );
+            if ( conn->drmAuthReplyReceived )
+            {
+               break;
+            }
+         }
+      }
+
+      if ( !conn->drmAuthReplyReceived )
+      {
+         GST_ERROR("wstAuthenticateVideoClientConnection: timeout waiting for auth response");
+         goto exit;
+      }
+      if ( conn->drmAuthReplyRc != 0 )
+      {
+         GST_ERROR("wstAuthenticateVideoClientConnection: auth failed status %d errno %d",
+                   conn->drmAuthReplyRc,
+                   conn->drmAuthReplyErr);
+         goto exit;
+      }
+
+      sink->soc.drmAuthenticated= TRUE;
+      result= true;
+   }
+
+exit:
+   return result;
+}
+
 void wstProcessMessagesVideoClientConnectionRaw( WstVideoClientConnection *conn )
 {
    if ( conn )
@@ -2298,9 +2437,10 @@ void wstProcessMessagesVideoClientConnectionRaw( WstVideoClientConnection *conn 
             {
                int mlen, id;
                mlen= m[2];
+               id= m[3];
                if ( len >= (mlen+3) )
                {
-                  id= m[3];
+                  //id= m[3];
                   switch( id )
                   {
                      case 'R':
@@ -2421,7 +2561,28 @@ void wstProcessMessagesVideoClientConnectionRaw( WstVideoClientConnection *conn 
                           }
                         }
                         break;
+                     case 'Q':
+                        if ( mlen >= 9 )
+                        {
+                           conn->drmAuthReplyRc= (int)(((unsigned int)m[4] << 24) |
+                                                       ((unsigned int)m[5] << 16) |
+                                                       ((unsigned int)m[6] << 8) |
+                                                       (unsigned int)m[7]);
+                           conn->drmAuthReplyErr= (int)(((unsigned int)m[8] << 24) |
+                                                        ((unsigned int)m[9] << 16) |
+                                                        ((unsigned int)m[10] << 8) |
+                                                        (unsigned int)m[11]);
+                           conn->drmAuthReplyReceived= TRUE;
+                           GST_DEBUG("got drm auth reply status %d errno %d",
+                                     conn->drmAuthReplyRc,
+                                     conn->drmAuthReplyErr);
+                        }
+                        break;
                      default:
+                        GST_WARNING("wstProcessMessagesVideoClientConnectionRaw: unhandled message id %c(0x%02X) mlen %d",
+                                     ((id >= 32) && (id <= 126)) ? id : '?',
+                                     id,
+                                     mlen);
                         break;
                   }
                   m += (mlen+3);
@@ -2429,11 +2590,18 @@ void wstProcessMessagesVideoClientConnectionRaw( WstVideoClientConnection *conn 
                }
                else
                {
+                  GST_WARNING("wstProcessMessagesVideoClientConnectionRaw: incomplete message id %c(0x%02X) mlen %d remainingLen %d",
+                               ((id >= 32) && (id <= 126)) ? id : '?',
+                               id,
+                               mlen,
+                               len);
                   len= 0;
                }
             }
             else
             {
+               GST_WARNING("wstProcessMessagesVideoClientConnectionRaw: invalid message header %02X %02X remainingLen %d",
+                            m[0], m[1], len);
                len= 0;
             }
          }
@@ -2452,6 +2620,18 @@ void wstProcessMessagesVideoClientConnectionRaw( WstVideoClientConnection *conn 
             UNLOCK(sink);
          }
       }
+      else if ( rc < 0 )
+      {
+         GST_ERROR("wstProcessMessagesVideoClientConnectionRaw: poll failed errno %d", errno);
+      }
+      else
+      {
+         GST_WARNING("wstProcessMessagesVideoClientConnectionRaw: no pending message from video server");
+      }
+   }
+   else
+   {
+      GST_WARNING("wstProcessMessagesVideoClientConnectionRaw: conn is NULL");
    }
 }
 
@@ -2533,6 +2713,7 @@ bool wstSendFrameVideoClientConnectionRaw( WstVideoClientConnection *conn, int b
          vy= sink->soc.videoY;
          vw= sink->soc.videoWidth;
          vh= sink->soc.videoHeight;
+         GST_WARNING("USHA: wstSendFrameVideoClientConnectionRaw: video bounds (%d,%d) %dx%d", vx, vy, vw, vh);
          if ( needBounds(sink) )
          {
             wstGetVideoBoundsRaw( sink, &vx, &vy, &vw, &vh );
@@ -2586,6 +2767,8 @@ bool wstSendFrameVideoClientConnectionRaw( WstVideoClientConnection *conn, int b
          {
             fd[2]= fdToSend2;
          }
+         int numFds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+         int* recvFds = (int*)CMSG_DATA(cmsg);
          GST_LOG( "%lld: send frame: %d, fd (%d, %d, %d [%d, %d, %d])", getCurrentTimeMillis(), buffIndex, frameFd0, frameFd1, frameFd2, fdToSend0, fdToSend1, fdToSend2);
          drmLockBuffer( sink, buffIndex );
          FRAME("out:       send frame %d buffer %d (%d)", conn->sink->soc.frameOutCount, conn->sink->soc.drmBuffer[buffIndex].bufferId, buffIndex);
@@ -2812,6 +2995,8 @@ static bool drmInit( GstWesterosSink *sink )
 {
    bool result= false;
    const char *drmName;
+   int rc;
+   struct drm_auth auth;
 
    drmName= getenv("WESTEROS_SINK_DRM_NAME");
    if ( !drmName )
@@ -2827,6 +3012,22 @@ static bool drmInit( GstWesterosSink *sink )
       goto exit;
    }
 
+
+   memset( &auth, 0, sizeof(auth) );
+   rc= ioctl( sink->soc.drmFd, DRM_IOCTL_GET_MAGIC, &auth );
+   if ( rc != 0 )
+   {
+      GST_ERROR("drmInit: DRM_IOCTL_GET_MAGIC failed: rc %d errno %d", rc, errno);
+      sink->soc.haveDrmAuthMagic= FALSE;
+      sink->soc.drmAuthenticated= FALSE;
+   }
+   else
+   {
+      sink->soc.drmAuthMagic= auth.magic;
+      sink->soc.haveDrmAuthMagic= TRUE;
+      sink->soc.drmAuthenticated= FALSE;
+      GST_WARNING("drmInit: cached DRM auth magic %u for socket authentication", (unsigned int)auth.magic);
+   }
    result= true;
 
 exit:
@@ -2858,6 +3059,9 @@ static void drmTerm( GstWesterosSink *sink )
       close( sink->soc.drmFd );
       sink->soc.drmFd= -1;
    }
+   sink->soc.drmAuthenticated= FALSE;
+   sink->soc.haveDrmAuthMagic= FALSE;
+   sink->soc.drmAuthMagic= 0;
 }
 
 static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int height )
@@ -2869,7 +3073,6 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
       struct drm_mode_create_dumb createDumb;
       struct drm_mode_map_dumb mapDumb;
       int i, rc;
-
       drmBuff= &sink->soc.drmBuffer[buffIndex];
 
       drmBuff->width= width;
@@ -2885,19 +3088,21 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
       createDumb.height += height/2;
       #endif
       createDumb.bpp= 8;
+
       rc= ioctl( sink->soc.drmFd, DRM_IOCTL_MODE_CREATE_DUMB, &createDumb );
       if ( rc )
       {
-         GST_ERROR("DRM_IOCTL_MODE_CREATE_DUMB failed: rc %d errno %d", rc, errno);
-         goto exit;
+      GST_ERROR("DRM_IOCTL_MODE_CREATE_DUMB failed: rc %d errno %d", rc, errno);
+      goto exit;
       }
       memset( &mapDumb, 0, sizeof(mapDumb) );
       mapDumb.handle= createDumb.handle;
+
       rc= ioctl( sink->soc.drmFd, DRM_IOCTL_MODE_MAP_DUMB, &mapDumb );
       if ( rc )
       {
-         GST_ERROR("DRM_IOCTL_MODE_MAP_DUMB failed: rc %d errno %d", rc, errno);
-         goto exit;
+      GST_ERROR("DRM_IOCTL_MODE_MAP_DUMB failed: rc %d errno %d", rc, errno);
+      goto exit;
       }
       drmBuff->handle[0]= createDumb.handle;
       drmBuff->pitch[0]= createDumb.pitch;
@@ -2907,8 +3112,8 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
       rc= drmPrimeHandleToFD( sink->soc.drmFd, drmBuff->handle[0], DRM_CLOEXEC | DRM_RDWR, &drmBuff->fd[0] );
       if ( rc )
       {
-         GST_ERROR("drmPrimeHandleToFD failed: rc %d errno %d", rc, errno);
-         goto exit;
+      GST_ERROR("drmPrimeHandleToFD failed: rc %d errno %d", rc, errno);
+      goto exit;
       }
 
       #ifdef USE_SINGLE_BUFFER_NV12
@@ -2921,16 +3126,16 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
       rc= ioctl( sink->soc.drmFd, DRM_IOCTL_MODE_CREATE_DUMB, &createDumb );
       if ( rc )
       {
-         GST_ERROR("DRM_IOCTL_MODE_CREATE_DUMB failed: rc %d errno %d\n", rc, errno);
-         goto exit;
+      GST_ERROR("DRM_IOCTL_MODE_CREATE_DUMB failed: rc %d errno %d\n", rc, errno);
+      goto exit;
       }
       memset( &mapDumb, 0, sizeof(mapDumb) );
       mapDumb.handle= createDumb.handle;
       rc= ioctl( sink->soc.drmFd, DRM_IOCTL_MODE_MAP_DUMB, &mapDumb );
       if ( rc )
       {
-         GST_ERROR("DRM_IOCTL_MODE_MAP_DUMB failed: rc %d errno %d", rc, errno);
-         goto exit;
+      GST_ERROR("DRM_IOCTL_MODE_MAP_DUMB failed: rc %d errno %d", rc, errno);
+      goto exit;
       }
       drmBuff->handle[1]= createDumb.handle;
       drmBuff->pitch[1]= createDumb.pitch;
@@ -2940,8 +3145,8 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
       rc= drmPrimeHandleToFD( sink->soc.drmFd, drmBuff->handle[1], DRM_CLOEXEC | DRM_RDWR, &drmBuff->fd[1] );
       if ( rc )
       {
-         GST_ERROR("drmPrimeHandleToFD failed: rc %d errno %d", rc, errno);
-         goto exit;
+      GST_ERROR("drmPrimeHandleToFD failed: rc %d errno %d", rc, errno);
+      goto exit;
       }
       #endif
 
@@ -2949,7 +3154,8 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
       drmBuff->localAlloc= true;
 
       result= true;
-   }
+	}
+   
 exit:
    if ( !result )
    {
@@ -3213,6 +3419,7 @@ static WstDrmBuffer *drmGetBuffer( GstWesterosSink *sink, int width, int height 
          drmBuff= 0;
       }
    }
+
 exit:
    return drmBuff;
 }
