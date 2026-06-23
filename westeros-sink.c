@@ -2273,7 +2273,8 @@ static gboolean gst_westeros_sink_check_caps(GstWesterosSink *sink, GstPad *peer
    caps= gst_pad_get_caps(peer);
 #endif
   
-   if (gst_caps_get_size(caps) == 0)
+   if ( !caps || (gst_caps_get_size(caps) == 0) )
+   //if (gst_caps_get_size(caps) == 0)
    {
       result= TRUE;
       goto exit;
