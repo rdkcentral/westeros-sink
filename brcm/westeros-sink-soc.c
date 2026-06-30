@@ -2600,7 +2600,7 @@ static gpointer captureThread(gpointer data)
       if ( sink->display && sink->queue && wl_display_dispatch_queue_pending(sink->display, sink->queue) == 0 )
       {
          wl_display_flush(sink->display);
-         if ( !eosDetected && !sink->soc.quitCaptureThread )
+         if ( !eosDetected )
          {
             wl_display_roundtrip_queue(sink->display,sink->queue);
          }
