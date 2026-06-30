@@ -834,6 +834,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.enableTextureSignal= FALSE;
    sink->soc.enableDecodeErrorSignal= FALSE;
    sink->soc.latencyTarget= DEFAULT_LATENCY_TARGET;
+   g_mutex_init( &sink->soc.captureStopMutex );
    sink->soc.connectId= 0;
    sink->soc.quitCaptureThread= TRUE;
    sink->soc.captureThread= NULL;
@@ -980,6 +981,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 {
+   g_mutex_clear( &sink->soc.captureStopMutex );
    NxClient_Uninit(); 
 }
 
@@ -2028,6 +2030,8 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
 
 static void sinkSocStopVideo( GstWesterosSink *sink )
 {
+   // Prevent consecutive invocations until the ongoing call finishes
+   g_mutex_lock( &sink->soc.captureStopMutex );
    LOCK( sink );
    if ( sink->soc.captureThread )
    {
@@ -2046,6 +2050,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
       g_thread_join( captureThread );
       LOCK( sink );
    }
+   g_mutex_unlock( &sink->soc.captureStopMutex );
 
    if ( sink->soc.sb )
    {
@@ -2595,7 +2600,7 @@ static gpointer captureThread(gpointer data)
       if ( sink->display && sink->queue && wl_display_dispatch_queue_pending(sink->display, sink->queue) == 0 )
       {
          wl_display_flush(sink->display);
-         if ( !eosDetected )
+         if ( !eosDetected && !sink->soc.quitCaptureThread )
          {
             wl_display_roundtrip_queue(sink->display,sink->queue);
          }
