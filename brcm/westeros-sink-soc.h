@@ -41,8 +41,36 @@
 #else
 #define RATECONTROL_SUPPPORTED (0)
 #endif
+#if NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(24,0) || defined NEXUS_VIDEO_DECODER_RUNTIME_EXTRA_PICTURE_BUFFERS_BACKPORT 
+#define EXTRA_PICTURE_BUFFERS_SUPPPORTED (1)
+#else
+#define EXTRA_PICTURE_BUFFERS_SUPPPORTED (0)
+#endif
+
 #define MIN_PLAYBACK_RATE_WITH_AUDIO (0.25)
 #define MAX_PLAYBACK_RATE_WITH_AUDIO (2.0)
+
+#define VIDEO_STATUS_HISTORY_SIZE 6
+#define STATUS_MESSAGE_TIMEOUT_SECS 5*1000*1000 // 5 seconds in microseconds
+#define DISPLAY_DROP_AVG_WINDOW_US  (10*1000*1000) /* rolling window for FRC drop-rate averaging */
+#define DISPLAY_DROP_RATE_MARGIN    (1.5)          /* warn when drops exceed FRC-expected by 50% ... */
+#define DISPLAY_DROP_RATE_FLOOR     (1.0)          /* ...but always allow this many drops/sec of slack */
+
+typedef struct _VideoStatusSnapshot {
+   guint32 fifoDepth;
+   guint32 queueDepth;
+   guint32 numDecoded;
+   guint32 numDisplayed;
+   guint32 pts;
+   guint32 numDecodeErrors;
+   guint32 numDecodeInputErrors;
+   guint32 numDisplayErrors;
+   guint32 numDecodeDrops;
+   guint32 numDisplayDrops;
+   guint32 numDisplayUnderflows;
+   guint32 ptsErrorCount;
+   gint64 timestamp;
+} VideoStatusSnapshot;
 
 struct _GstWesterosSinkSoc
 {
@@ -102,6 +130,7 @@ struct _GstWesterosSinkSoc
    gboolean emitDecodeError;
    gboolean decodeError;
    guint streamFrameRate;
+   NEXUS_VideoFrameRate capsFrameRate;
    guint prevQueueDepth;
    guint prevFifoDepth;
    guint prevNumDecoded;
@@ -158,6 +187,22 @@ struct _GstWesterosSinkSoc
 
    struct wl_sb *sb;
    int activeBuffers;
+
+   VideoStatusSnapshot statusHistory[VIDEO_STATUS_HISTORY_SIZE];
+   guint statusHistoryIndex;
+   gboolean statusHistoryFull;
+   int runtimeExtraPictureBuffers;
+   gint64 statusHistorylastDisplayUnderflowTime;
+   gint64 statusHistorylastDisplayErrorTime;
+   gint64 statusHistorylastDecodeErrorTime;
+   gint64 statusHistorylastDecodeInputErrorTime;
+   gint64 statusHistorylastDecodeDropTime;
+   gint64 statusHistorylastDisplayDropTime;
+   gint64 statusHistorylastPtsErrorTime;
+   guint32 displayDropRefCount;   /* numDisplayDrops at start of the averaging window */
+   gint64  displayDropRefTime;    /* start of the FRC drop-rate averaging window */
+   gdouble expectedDropRate;      /* FRC-expected display-drop rate (drops/sec; -1 unknown),
+                                     recomputed by updateExpectedFrcDropRate() on rate change */
 };
 
 void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass);
