@@ -91,7 +91,7 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
       NEXUS_SimpleStcChannel_GetStc(sink->soc.stcChannel, &stc); \
    }  \
    FUNC(""format" decStatus stc 0x%x %ums  pts 0x%x %ums  decoded %u display %u qDepth %u decErr %u inErr %u ",\
-      __VA_ARGS__, stc, stc/45, videoStatus.pts, videoStatus.pts/45, videoStatus.numDecoded, videoStatus.numDisplayed, videoStatus.queueDepth, videoStatus.numDecodeErrors, videoStatus.numDecodeErrors); \
+      __VA_ARGS__, stc, stc/45, videoStatus.pts, videoStatus.pts/45, videoStatus.numDecoded, videoStatus.numDisplayed, videoStatus.queueDepth, videoStatus.numDecodeErrors, videoStatus.numDecodeInputErrors); \
    } \
 } \
 
@@ -150,11 +150,13 @@ static void postErrorMessage( GstWesterosSink *sink, int errorCode, const char *
 static gpointer captureThread(gpointer data);
 static void processFrame( GstWesterosSink *sink );
 static void updateVideoStatus( GstWesterosSink *sink );
+static void updateExpectedFrcDropRate( GstWesterosSink *sink );
 static void firstPtsCallback( void *userData, int n );
 static void underflowCallback( void *userData, int n );
 static void ptsErrorCallback( void *userData, int n );
 static NEXUS_VideoCodec convertVideoCodecToNexus(bvideo_codec codec);
 static long long getCurrentTimeMillis(void);
+static NEXUS_VideoFrameRate convertFrameRateToNexus(gint numerator, gint denominator);
 static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat speed, gboolean playing );
 static void setDecodeMode( GstWesterosSink *sink );
 static gboolean processSendEventSinkSoc( GstWesterosSink *sink, GstEvent *event, gboolean *passToDefault);
@@ -760,25 +762,77 @@ static void streamChangedCallback(void * context, int param)
    #endif
    #endif
 
+   /* RDKEVD-6401 : For NF DRS-43 4:3 AR tests, Comcast/Sky request we push the PillarBox logic down to gstreamer */
+   /* NF DRS-43 uses NEXUS_AspectRatio_eSar, 1x1 ratio and 4:3 source dimensions */
+   /* Only correct modes that have wrong 4:3 behaviour: eFull (zoom-mode=0) and ePanScan (zoom-mode=2).
+    * Deliberate choices such as eZoom (zoom-mode=3/16:9 Fill) are left as-is. */
+   /* TEMPORARILY set zoom to PillarBox, DON'T update sink->soc.zoomMode so as to preserve and revert previous setting */
+   if ( sink->soc.videoWindow &&
+        ( sink->soc.zoomMode == NEXUS_VideoWindowContentMode_eFull ||
+          sink->soc.zoomMode == NEXUS_VideoWindowContentMode_ePanScan ) )
+   {
+      NEXUS_SurfaceClientSettings clientSettings;
+      NEXUS_SurfaceClient_GetSettings(sink->soc.videoWindow, &clientSettings);
+
+      /* Determine display aspect ratio — only pillarbox when display is NOT 4:3 */
+      NxClient_DisplaySettings dspSettings;
+      NxClient_GetDisplaySettings(&dspSettings);
+      NEXUS_VideoFormatInfo formatInfo;
+      NEXUS_VideoFormat_GetInfo(dspSettings.format, &formatInfo);
+      bool displayIs4x3 = (formatInfo.aspectRatio == NEXUS_AspectRatio_e4x3);
+
+      bool is4x3 = false;
+      if (sink->soc.codec == bvideo_codec_av1) {
+         if (streamInfo.displayVerticalSize > 0 && streamInfo.sourceHorizontalSize > 0) {
+            float sar = ((float)streamInfo.displayHorizontalSize / (float)streamInfo.displayVerticalSize) *
+                        ((float)streamInfo.sourceVerticalSize / (float)streamInfo.sourceHorizontalSize);
+            is4x3 = (streamInfo.sourceHorizontalSize * 3 == streamInfo.sourceVerticalSize * 4) &&
+                    (sar >= 0.99f && sar <= 1.01f);
+         }
+      } else {
+         is4x3 = (streamInfo.aspectRatio == NEXUS_AspectRatio_eSar || streamInfo.aspectRatio == NEXUS_AspectRatio_eUnknown) &&
+                 (streamInfo.sampleAspectRatioX == streamInfo.sampleAspectRatioY) &&
+                 ((streamInfo.sourceHorizontalSize*3) == (streamInfo.sourceVerticalSize*4));
+      }
+
+      if ( is4x3 && !displayIs4x3 )
+      {
+         if ( clientSettings.composition.contentMode != NEXUS_VideoWindowContentMode_eBox )
+         {
+            GST_INFO("RDKEVD-6401: 4:3 content on non-4:3 display, setting eBox\n");
+            clientSettings.composition.contentMode= NEXUS_VideoWindowContentMode_eBox;
+            NEXUS_SurfaceClient_SetSettings(sink->soc.videoWindow, &clientSettings);
+         }
+      }
+      else if ( clientSettings.composition.contentMode != sink->soc.zoomMode )
+      {
+         GST_INFO("RDKEVD-6401: reverting contentMode to zoomMode %d (displayIs4x3=%d is4x3=%d)\n",
+                  sink->soc.zoomMode, displayIs4x3, is4x3);
+         clientSettings.composition.contentMode= sink->soc.zoomMode;
+         NEXUS_SurfaceClient_SetSettings(sink->soc.videoWindow, &clientSettings);
+      }
+   }
+
    GST_INFO("\nNEXUS_SimpleVideoDecoder_GetStreamInformation\n \
    \tvalid=%d \n \
    \tsourceHorizontalSize=%d \n \
-   \tsourceHorizontalSizesourceVerticalSize=%d \n \
-   \tsourceVerticalSizecodedSourceHorizontalSize=%d \n \
-   \tcodedSourceHorizontalSizecodedSourceVerticalSize=%d \n \
-   \tcodedSourceVerticalSizedisplayHorizontalSize=%d \n \
-   \tdisplayHorizontalSizedisplayVerticalSize=%d \n \
-   \tdisplayVerticalSizeaspectRatio=%d \n \
-   \taspectRatiosampleAspectRatioX=%d \n \
-   \tsampleAspectRatioXsampleAspectRatioY=%d \n \
-   \tsampleAspectRatioYframeRate=%d \n \
-   \tframeRateframeProgressive=%d \n \
-   \tframeProgressivestreamProgressive=%d \n \
-   \tstreamProgressivehorizontalPanScan=%d \n \
-   \thorizontalPanScanverticalPanScan=%d \n \
-   \tverticalPanScanlowDelayFlag=%d \n \
-   \tlowDelayFlagfixedFrameRateFlag=%d \n \
-   \tdynamicMetadataTypeeotf=%d " \
+   \tsourceVerticalSize=%d \n \
+   \tcodedSourceHorizontalSize=%d \n \
+   \tcodedSourceVerticalSize=%d \n \
+   \tdisplayHorizontalSize=%d \n \
+   \tdisplayVerticalSize=%d \n \
+   \taspectRatio=%d \n \
+   \tsampleAspectRatioX=%d \n \
+   \tsampleAspectRatioY=%d \n \
+   \tframeRate=%d \n \
+   \tframeProgressive=%d \n \
+   \tstreamProgressive=%d \n \
+   \thorizontalPanScan=%d \n \
+   \tverticalPanScan=%d \n \
+   \tlowDelayFlag=%d \n \
+   \tfixedFrameRateFlag=%d \n \
+   \tdynamicMetadataType=%d \n \
+   \teotf=%d " \
    , streamInfo.valid \
    , streamInfo.sourceHorizontalSize \
    , streamInfo.sourceVerticalSize \
@@ -809,6 +863,7 @@ static void streamChangedCallback(void * context, int param)
       sendVideoFormatChgMsg(sink);
    }
    sink->soc.streamFrameRate= streamInfo.frameRate;
+   updateExpectedFrcDropRate(sink);
 }
 #endif
 
@@ -861,6 +916,21 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.sb= 0;
    sink->soc.activeBuffers= 0;
+   sink->soc.capsFrameRate= (NEXUS_VideoFrameRate)-1; /* not yet set from caps */
+   sink->passCaps= TRUE; /* need framerate from caps if available */
+   memset(sink->soc.statusHistory, 0, sizeof(sink->soc.statusHistory));
+   sink->soc.statusHistoryIndex= 1; /* allow first pass to report errors */
+   sink->soc.statusHistoryFull= FALSE;
+   sink->soc.statusHistorylastDisplayUnderflowTime= 0;
+   sink->soc.statusHistorylastDisplayErrorTime= 0;
+   sink->soc.statusHistorylastDecodeErrorTime= 0;
+   sink->soc.statusHistorylastDecodeInputErrorTime= 0;
+   sink->soc.statusHistorylastDecodeDropTime= 0;
+   sink->soc.statusHistorylastDisplayDropTime= 0;
+   sink->soc.statusHistorylastPtsErrorTime= 0;
+   sink->soc.displayDropRefCount= 0;
+   sink->soc.displayDropRefTime= 0;
+   sink->soc.expectedDropRate= -1.0;
    sink->soc.captureEnabled= FALSE;
    sink->soc.presentationStarted= FALSE;
    sink->soc.surfaceClientId= 0;
@@ -871,6 +941,9 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.ptsOffset= 0;
    sink->soc.zoomSet= FALSE;
    sink->soc.zoomMode= NEXUS_VideoWindowContentMode_eFull;
+   #if EXTRA_PICTURE_BUFFERS_SUPPPORTED
+   sink->soc.runtimeExtraPictureBuffers= 1;
+   #endif
    sink->soc.pixelAspectRatio= 1.0;
    sink->soc.havePixelAspectRatio= FALSE;
    sink->soc.pixelAspectRatioChanged= FALSE;
@@ -1082,6 +1155,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
       case PROP_ZOOM_MODE:
          {
             int intValue= g_value_get_int(value);
+            GST_INFO("gst_westeros_sink_soc_set_property PROP_ZOOM_MODE intValue %d sink->soc.zoomMode %d", intValue, sink->soc.zoomMode);
 
             sink->soc.zoomSet= TRUE;
             switch( intValue )
@@ -1110,6 +1184,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
          }
          break;
       case PROP_FORCE_ASPECT_RATIO:
+         GST_INFO("gst_westeros_sink_soc_set_property PROP_FORCE_ASPECT_RATIO sink->soc.zoomSet %d", sink->soc.zoomSet);
          if ( !sink->soc.zoomSet )
          {
             sink->soc.forceAspectRatio= g_value_get_boolean(value);
@@ -1126,7 +1201,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                NEXUS_SurfaceClientSettings clientSettings;
 
                NEXUS_SurfaceClient_GetSettings(sink->soc.videoWindow, &clientSettings);
-               clientSettings.composition.contentMode= sink->soc.zoomMode;;
+               clientSettings.composition.contentMode= sink->soc.zoomMode;
                NEXUS_SurfaceClient_SetSettings(sink->soc.videoWindow, &clientSettings);
             }
          }
@@ -1420,7 +1495,7 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
    {
       sink->startAfterLink= TRUE;
    }
-   else if ( sink->soc.codec == bvideo_codec_unknown )
+   else if ( sink->soc.codec == bvideo_codec_unknown || sink->soc.capsFrameRate == (NEXUS_VideoFrameRate)-1 )
    {
       sink->startAfterCaps= TRUE;
    }
@@ -1615,6 +1690,10 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
 
    WESTEROS_UNUSED(sink);
 
+   gchar *caps_str = gst_caps_to_string(caps);
+   GST_DEBUG("Sink Pad Set Caps %s", caps_str);
+   g_free (caps_str);
+
    structure= gst_caps_get_structure(caps, 0);
    if(structure )
    {
@@ -1622,6 +1701,18 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
       if (strcmp("video/x-brcm-avd", mime) == 0)
       {
          result= TRUE;
+      }
+
+      gint numerator, denominator;
+      if ( gst_structure_get_fraction(structure, "framerate", &numerator, &denominator) )
+      {
+         sink->soc.capsFrameRate= convertFrameRateToNexus(numerator, denominator);
+         GST_INFO("gst_westeros_sink_soc_accept_caps framerate %d/%d nexusFrameRate %d", numerator, denominator, sink->soc.capsFrameRate);
+      }
+      else
+      {
+         GST_INFO("gst_westeros_sink_soc_accept_caps no framerate in caps using unknown");
+         sink->soc.capsFrameRate= NEXUS_VideoFrameRate_eUnknown;
       }
 
       #if ((NEXUS_PLATFORM_VERSION_MAJOR >= 18) || (NEXUS_PLATFORM_VERSION_MAJOR >= 17 && NEXUS_PLATFORM_VERSION_MINOR >= 3))
@@ -1882,14 +1973,44 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
        goto exit;
    }
 
+   if ( sink->soc.capsFrameRate == (NEXUS_VideoFrameRate)-1 )
+   {
+      GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: capsFrameRate not yet set");
+      goto exit;
+   }
+
    if ( sink->soc.serverPlaySpeed != 1.0 )
    {
       setDecodeMode( sink );
    }
 
+   #if EXTRA_PICTURE_BUFFERS_SUPPPORTED
+   if (sink->soc.codec == bvideo_codec_av1 && sink->soc.runtimeExtraPictureBuffers)
+   {
+      NEXUS_VideoDecoderSettings settings;
+      NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &settings);
+
+      GST_INFO("using %d extra picture buffers", sink->soc.runtimeExtraPictureBuffers);
+      settings.runtimeExtraPictureBuffers= sink->soc.runtimeExtraPictureBuffers;
+      rc= NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
+      if ( rc != NEXUS_SUCCESS )
+      {
+         GST_WARNING("NEXUS_SimpleVideoDecoder_SetSettings extra picture buffers %d failed rc %d", settings.runtimeExtraPictureBuffers, rc);
+         NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &settings); /* have to get again for 2nd set to work */
+         settings.runtimeExtraPictureBuffers= 0;
+         rc= NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
+         if ( rc != NEXUS_SUCCESS ) {
+            GST_WARNING("NEXUS_SimpleVideoDecoder_SetSettings extra picture buffers %d failed rc %d", settings.runtimeExtraPictureBuffers, rc);
+
+         }
+      }
+   }
+   #endif
+
    /* Start video decoder */
    NEXUS_SimpleVideoDecoder_GetDefaultStartSettings(&startSettings);
    startSettings.settings.codec= convertVideoCodecToNexus(sink->soc.codec);
+   startSettings.settings.frameRate= sink->soc.capsFrameRate;
    startSettings.settings.pidChannel= sink->soc.videoPidChannel;
    startSettings.settings.progressiveOverrideMode= NEXUS_VideoDecoderProgressiveOverrideMode_eDisable;
    startSettings.settings.timestampMode= NEXUS_VideoDecoderTimestampMode_eDisplay;                
@@ -2853,6 +2974,258 @@ static void processFrame( GstWesterosSink *sink )
    GST_LOG("processFrame: exit");
 }
 
+void buflog_dump_on_error(GstWesterosSink *sink, const char *strErr, unsigned int pts)
+{
+   GstPad *pad= gst_pad_get_peer( sink->peerPad );
+   if ( pad )
+   {
+      GstStructure *structure;
+      structure= gst_structure_new("capture_stream_on_error",
+         "error_string", G_TYPE_STRING, strErr,
+         "decoder_pts", G_TYPE_UINT, pts,
+         NULL );
+
+      if ( structure )
+      {
+         gst_pad_push_event( pad, gst_event_new_custom(GST_EVENT_CUSTOM_UPSTREAM, structure));
+      }
+      gst_object_unref( pad );
+   }
+}
+
+void dumpStatusHistory(GstWesterosSink *sink, const char *message)
+{
+   // Dump video decoder status history (oldest to newest)
+   GST_INFO("%s Video decoder status history:", message);
+
+   int count = sink->soc.statusHistoryFull ? VIDEO_STATUS_HISTORY_SIZE : sink->soc.statusHistoryIndex;
+
+   for (int i = 0; i < count; i++) {
+      int idx;
+      if (sink->soc.statusHistoryFull) {
+         // If buffer is full, oldest entry is at current write position
+         idx = (sink->soc.statusHistoryIndex + i) % VIDEO_STATUS_HISTORY_SIZE;
+      } else {
+         // If buffer not full, oldest entry is at index 0
+         idx = i;
+      }
+      VideoStatusSnapshot *snap = &sink->soc.statusHistory[idx];
+      gint64 timestamp_us = snap->timestamp;
+      guint hours = (timestamp_us / (1000000LL * 3600)) % 24;
+      guint minutes = (timestamp_us % (1000000LL * 3600)) / (1000000LL * 60);
+      guint seconds = (timestamp_us % (1000000LL * 60)) / 1000000LL;
+      guint milliseconds = (timestamp_us % 1000000LL) / 1000;
+
+      GST_INFO("[%2d] %02u:%02u:%02u.%03u ff=%u q=%u d=%u dp=%u pts=0x%x/%ums dEr=%u inEr=%u dpEr=%u dDrp=%u dpDrp=%u Uf=%u ptsEr=%u", 
+        (i-count+1), hours, minutes, seconds, milliseconds, snap->fifoDepth, snap->queueDepth, snap->numDecoded, snap->numDisplayed, snap->pts, snap->pts/45,
+         snap->numDecodeErrors, snap->numDecodeInputErrors, snap->numDisplayErrors, snap->numDecodeDrops, snap->numDisplayDrops, snap->numDisplayUnderflows, snap->ptsErrorCount);
+
+   }
+}
+
+/* NEXUS_VideoFrameRate enum -> rate in 1/100th Hz, to match
+   NEXUS_VideoFormatInfo.verticalFreq (6000 = 60.00Hz, 5994 = 59.94Hz). */
+static guint frameRateToVerticalFreq(NEXUS_VideoFrameRate fr)
+{
+   switch (fr)
+   {
+      case NEXUS_VideoFrameRate_e7_493:  return 749;
+      case NEXUS_VideoFrameRate_e7_5:    return 750;
+      case NEXUS_VideoFrameRate_e9_99:   return 999;
+      case NEXUS_VideoFrameRate_e10:     return 1000;
+      case NEXUS_VideoFrameRate_e11_988: return 1199;
+      case NEXUS_VideoFrameRate_e12:     return 1200;
+      case NEXUS_VideoFrameRate_e12_5:   return 1250;
+      case NEXUS_VideoFrameRate_e14_985: return 1499;
+      case NEXUS_VideoFrameRate_e15:     return 1500;
+      case NEXUS_VideoFrameRate_e19_98:  return 1998;
+      case NEXUS_VideoFrameRate_e20:     return 2000;
+      case NEXUS_VideoFrameRate_e23_976: return 2398;
+      case NEXUS_VideoFrameRate_e24:     return 2400;
+      case NEXUS_VideoFrameRate_e25:     return 2500;
+      case NEXUS_VideoFrameRate_e29_97:  return 2997;
+      case NEXUS_VideoFrameRate_e30:     return 3000;
+      case NEXUS_VideoFrameRate_e50:     return 5000;
+      case NEXUS_VideoFrameRate_e59_94:  return 5994;
+      case NEXUS_VideoFrameRate_e60:     return 6000;
+      case NEXUS_VideoFrameRate_e100:    return 10000;
+      case NEXUS_VideoFrameRate_e119_88: return 11988;
+      case NEXUS_VideoFrameRate_e120:    return 12000;
+      default:                           return 0; /* unknown */
+   }
+}
+
+/* Recompute the FRC-expected display-drop rate into sink->soc.expectedDropRate. Call whenever
+   an input changes: the content frame rate (sink->soc.streamFrameRate) or the display format
+   (sink->soc.outputFormat). Frame-rate conversion only drops frames when content is faster than
+   the display, at rate (contentRate - displayRate); the result is 0 when content matches/is <=
+   display (no drop should ever occur) and -1 when either rate is unknown. */
+static void updateExpectedFrcDropRate(GstWesterosSink *sink)
+{
+   guint c= frameRateToVerticalFreq((NEXUS_VideoFrameRate)sink->soc.streamFrameRate);
+   NEXUS_VideoFormatInfo fi;
+   NEXUS_VideoFormat_GetInfo(sink->soc.outputFormat, &fi);
+   guint d= fi.verticalFreq;                          /* 1/100th Hz */
+
+   gdouble drpRate= 0.0;            /* default: content/display matched/submultiple/slower */
+   if ( c == 0 || d == 0 ) drpRate= -1.0;                      /* unknown */
+   else if ( c > d )       drpRate= (gdouble)(c - d) / 100.0;  /* content faster */
+   sink->soc.expectedDropRate= drpRate;
+   GST_INFO_OBJECT(sink, "streamVertFreq %.2f displayVertFreq %.2f expectedDropRate %f",
+                   c/100.0, d/100.0, sink->soc.expectedDropRate);
+}
+
+/* numDisplayDrops also increments during normal frame-rate conversion (content faster than
+   the display), so a matched/submultiple rate treats any drop as a fault, while a mismatched
+   rate only warns when the averaged drop rate exceeds the FRC-expected rate by 50% (or a
+   fixed floor for very low expected rates, e.g. 60.00fps content on a 59.94Hz panel). */
+static gboolean displayDropIsAnomalous(GstWesterosSink *sink, NEXUS_VideoDecoderStatus videoStatus, guint64 currentTime)
+{
+   gdouble expectedRate= sink->soc.expectedDropRate;
+
+   if ( expectedRate == 0.0 )
+   {
+      /* matched / submultiple / slower content: no frame should ever be dropped */
+      if ( currentTime - sink->soc.statusHistorylastDisplayDropTime > STATUS_MESSAGE_TIMEOUT_SECS )
+      {
+         sink->soc.statusHistorylastDisplayDropTime= currentTime;
+         return TRUE;
+      }
+      return FALSE;
+   }
+
+   /* content faster than display (or rate unknown): FRC legitimately drops ~expectedRate/sec.
+      Average over a window and warn only when the sustained drop rate clearly exceeds it. */
+   gdouble expRate= (expectedRate < 0.0) ? 0.0 : expectedRate; /* unknown -> floor guards */
+
+   if ( sink->soc.displayDropRefTime == 0 )
+   {
+      sink->soc.displayDropRefTime= currentTime;
+      sink->soc.displayDropRefCount= videoStatus.numDisplayDrops;
+      return FALSE;
+   }
+
+   gint64 elapsed= currentTime - sink->soc.displayDropRefTime;
+   if ( elapsed < DISPLAY_DROP_AVG_WINDOW_US )
+   {
+      return FALSE;
+   }
+
+   guint32 delta= videoStatus.numDisplayDrops - sink->soc.displayDropRefCount;
+   gdouble observedRate= (gdouble)delta * 1000000.0 / (gdouble)elapsed;
+   gdouble threshold= expRate * DISPLAY_DROP_RATE_MARGIN;       /* 50% over expected... */
+   if ( threshold < expRate + DISPLAY_DROP_RATE_FLOOR )         /* ...but at least FLOOR above, so */
+   {
+      threshold= expRate + DISPLAY_DROP_RATE_FLOOR;             /* low FRC rates don't false-trip */
+   }
+
+   gboolean anomalous= FALSE;
+   if ( observedRate > threshold &&
+        (currentTime - sink->soc.statusHistorylastDisplayDropTime > STATUS_MESSAGE_TIMEOUT_SECS) )
+   {
+      GST_INFO("display drop rate %.2f/s exceeds FRC-expected %.2f/s (threshold %.2f/s)",
+               observedRate, expRate, threshold);
+      sink->soc.statusHistorylastDisplayDropTime= currentTime;
+      anomalous= TRUE;
+   }
+
+   sink->soc.displayDropRefTime= currentTime;   /* slide window */
+   sink->soc.displayDropRefCount= videoStatus.numDisplayDrops;
+   return anomalous;
+}
+
+static void saveStatusHistory(GstWesterosSink *sink, NEXUS_VideoDecoderStatus videoStatus, gboolean videoPlaying, gboolean flushStarted)
+{
+   char *statusMessage = NULL;
+   // Only check if playing and we have a previous entry
+   if ( videoPlaying && !flushStarted && (sink->soc.statusHistoryFull || sink->soc.statusHistoryIndex > 0) ) 
+   {
+      // Get previous index to compare against
+      guint prevIndex;
+      if (sink->soc.statusHistoryIndex == 0) {
+         prevIndex = VIDEO_STATUS_HISTORY_SIZE - 1;
+      } else {
+         prevIndex = sink->soc.statusHistoryIndex - 1;
+      }
+
+      guint64 currentTime = g_get_monotonic_time();
+
+      if (sink->soc.statusHistory[prevIndex].numDisplayUnderflows != videoStatus.numDisplayUnderflows) {
+         if (currentTime - sink->soc.statusHistorylastDisplayUnderflowTime > STATUS_MESSAGE_TIMEOUT_SECS) {
+            statusMessage = "Display underflow detected!";
+            sink->soc.statusHistorylastDisplayUnderflowTime = currentTime;
+         }
+      }
+      else if (sink->soc.statusHistory[prevIndex].numDisplayErrors != videoStatus.numDisplayErrors) {
+         if (currentTime - sink->soc.statusHistorylastDisplayErrorTime > STATUS_MESSAGE_TIMEOUT_SECS) {
+            statusMessage = "Display error detected!";
+            sink->soc.statusHistorylastDisplayErrorTime = currentTime;
+         }
+      }
+      else if (sink->soc.statusHistory[prevIndex].numDecodeErrors != videoStatus.numDecodeErrors) {
+         if (currentTime - sink->soc.statusHistorylastDecodeErrorTime > STATUS_MESSAGE_TIMEOUT_SECS) {
+            statusMessage = "Decode error detected!";
+            sink->soc.statusHistorylastDecodeErrorTime = currentTime;
+         }
+      }
+      else if (sink->soc.statusHistory[prevIndex].numDecodeInputErrors != videoStatus.numDecodeInputErrors) {
+         if (currentTime - sink->soc.statusHistorylastDecodeInputErrorTime > STATUS_MESSAGE_TIMEOUT_SECS) {
+            statusMessage = "Decode input error detected!";
+            sink->soc.statusHistorylastDecodeInputErrorTime = currentTime;
+         }
+      }
+      else if (sink->soc.statusHistory[prevIndex].numDecodeDrops != videoStatus.numDecodeDrops) {
+         if (currentTime - sink->soc.statusHistorylastDecodeDropTime > STATUS_MESSAGE_TIMEOUT_SECS) {
+            statusMessage = "Decode drop detected!";
+            sink->soc.statusHistorylastDecodeDropTime = currentTime;
+         }
+      }
+      else if (sink->soc.statusHistory[prevIndex].numDisplayDrops != videoStatus.numDisplayDrops) {
+         if ( displayDropIsAnomalous(sink, videoStatus, currentTime) ) {
+            statusMessage = "Display drop detected!";
+            sink->soc.statusHistorylastDisplayDropTime = currentTime;
+         }
+      }
+      else if (sink->soc.statusHistory[prevIndex].ptsErrorCount != videoStatus.ptsErrorCount) {
+         if (currentTime - sink->soc.statusHistorylastPtsErrorTime > STATUS_MESSAGE_TIMEOUT_SECS) {
+            statusMessage = "PTS error detected!";
+            sink->soc.statusHistorylastPtsErrorTime = currentTime;
+         }
+      }
+   }
+   // Only capture history during playback so the zero-initialized baseline (slot 0)
+   // remains valid for detecting errors that are present from the very first play call.
+   if ( videoPlaying && !flushStarted )
+   {
+      // Capture current status to history buffer
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].fifoDepth = videoStatus.fifoDepth;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].queueDepth = videoStatus.queueDepth;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].numDecoded = videoStatus.numDecoded;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].numDisplayed = videoStatus.numDisplayed;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].pts = videoStatus.pts;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].numDecodeErrors = videoStatus.numDecodeErrors;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].numDecodeInputErrors = videoStatus.numDecodeInputErrors;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].numDisplayErrors = videoStatus.numDisplayErrors;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].numDecodeDrops = videoStatus.numDecodeDrops;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].numDisplayDrops = videoStatus.numDisplayDrops;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].numDisplayUnderflows = videoStatus.numDisplayUnderflows;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].ptsErrorCount = videoStatus.ptsErrorCount;
+      sink->soc.statusHistory[sink->soc.statusHistoryIndex].timestamp = g_get_real_time();
+
+      // Update circular buffer index
+      sink->soc.statusHistoryIndex = (sink->soc.statusHistoryIndex + 1) % VIDEO_STATUS_HISTORY_SIZE;
+      if (sink->soc.statusHistoryIndex == 0) {
+         sink->soc.statusHistoryFull = TRUE;
+      }
+   } // end if ( videoPlaying && !flushStarted ) history capture
+   if ( statusMessage )
+   {
+      dumpStatusHistory(sink, statusMessage);
+      buflog_dump_on_error(sink, statusMessage, videoStatus.pts);
+   }
+}
+
+
 static void updateVideoStatus( GstWesterosSink *sink )
 {
    NEXUS_VideoDecoderStatus videoStatus;
@@ -2879,6 +3252,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
 
    if ( NEXUS_SUCCESS == NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) )
    {
+      saveStatusHistory(sink, videoStatus, videoPlaying, flushStarted);
       if ( videoPlaying && !flushStarted )
       {
          LOCK( sink );
@@ -2991,11 +3365,17 @@ static void updateVideoStatus( GstWesterosSink *sink )
             sink->soc.noFrameCount= 0;
             sink->soc.presentationStarted= TRUE;
 
+            /* Drops within the current segment. Guard the unsigned subtraction: numDroppedOutOfSegment
+               is latched to numDisplayDrops at segment start, but a decoder flush/re-decode can reset
+               numDisplayDrops below that baseline, which would otherwise wrap to a huge value. */
+            guint32 inSegmentDrops= (videoStatus.numDisplayDrops >= sink->soc.numDroppedOutOfSegment)
+                                    ? (videoStatus.numDisplayDrops - sink->soc.numDroppedOutOfSegment)
+                                    : 0;
             if ( (sink->soc.firstPtsCallbackCalled  == TRUE) &&
-                 (((videoStatus.numDisplayDrops-sink->soc.numDroppedOutOfSegment) > sink->soc.numDropped) ||
+                 ((inSegmentDrops > sink->soc.numDropped) ||
                   (((videoStatus.numDecoded % QOS_INTERVAL) == 0) && videoStatus.numDecoded)) )
             {
-               sink->soc.numDropped= videoStatus.numDisplayDrops-sink->soc.numDroppedOutOfSegment;
+               sink->soc.numDropped= inSegmentDrops;
 
                GstMessage *msg= gst_message_new_qos( GST_OBJECT_CAST(sink),
                                                      FALSE, /* live */
@@ -3009,7 +3389,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
                                              GST_FORMAT_BUFFERS,
                                              videoStatus.numDecoded,
                                              sink->soc.numDropped );
-                  GST_INFO("post QoS: processed %u dropped %u", videoStatus.numDecoded, videoStatus.numDisplayDrops);
+                  GST_INFO("post QoS: processed %u dropped %u", videoStatus.numDecoded, sink->soc.numDropped);
                   if ( !gst_element_post_message( GST_ELEMENT(sink), msg ) )
                   {
                      GST_WARNING("unable to post QoS");
@@ -3098,6 +3478,7 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
    if ( nxDspSettings.format != sink->soc.outputFormat )
    {
       sink->soc.outputFormat= nxDspSettings.format;
+      updateExpectedFrcDropRate(sink);
    }
 
    if ( sink->windowSizeOverride )
@@ -3498,6 +3879,45 @@ static NEXUS_VideoCodec convertVideoCodecToNexus(bvideo_codec codec)
    }
    
    return nexusVideoCodec;
+}
+
+
+static gint gcd(gint a, gint b)
+{
+    return b == 0 ? a : gcd(b, a % b);
+}
+
+static NEXUS_VideoFrameRate convertFrameRateToNexus(gint numerator, gint denominator)
+{
+    if (numerator == 0 || denominator == 0)
+        return NEXUS_VideoFrameRate_eUnknown;
+
+    gint snum = numerator / gcd(numerator, denominator);
+    gint sden = denominator / gcd(numerator, denominator);
+
+    if (snum == 24000 && sden == 1001) return NEXUS_VideoFrameRate_e23_976;
+    else if (snum == 24 && sden == 1) return NEXUS_VideoFrameRate_e24;
+    else if (snum == 25 && sden == 1) return NEXUS_VideoFrameRate_e25;
+    else if (snum == 30000 && sden == 1001) return NEXUS_VideoFrameRate_e29_97;
+    else if (snum == 30 && sden == 1) return NEXUS_VideoFrameRate_e30;
+    else if (snum == 50 && sden == 1) return NEXUS_VideoFrameRate_e50;
+    else if (snum == 60000 && sden == 1001) return NEXUS_VideoFrameRate_e59_94;
+    else if (snum == 60 && sden == 1) return NEXUS_VideoFrameRate_e60;
+    else if (snum == 15000 && sden == 1001) return NEXUS_VideoFrameRate_e14_985;
+    else if (snum == 15000 && sden == 2002) return NEXUS_VideoFrameRate_e7_493;
+    else if (snum == 10 && sden == 1) return NEXUS_VideoFrameRate_e10;
+    else if (snum == 15 && sden == 1) return NEXUS_VideoFrameRate_e15;
+    else if (snum == 20 && sden == 1) return NEXUS_VideoFrameRate_e20;
+    else if (snum == 25 && sden == 2) return NEXUS_VideoFrameRate_e12_5;
+    else if (snum == 100 && sden == 1) return NEXUS_VideoFrameRate_e100;
+    else if (snum == 120000 && sden == 1001) return NEXUS_VideoFrameRate_e119_88;
+    else if (snum == 120 && sden == 1) return NEXUS_VideoFrameRate_e120;
+    else if (snum == 20000 && sden == 1001) return NEXUS_VideoFrameRate_e19_98;
+    else if (snum == 15 && sden == 2) return NEXUS_VideoFrameRate_e7_5;
+    else if (snum == 12 && sden == 1) return NEXUS_VideoFrameRate_e12;
+    else if (snum == 12000 && sden == 1001) return NEXUS_VideoFrameRate_e11_988;
+    else if (snum == 10000 && sden == 1001) return NEXUS_VideoFrameRate_e9_99;
+    else return NEXUS_VideoFrameRate_eUnknown;
 }
 
 static long long getCurrentTimeMillis(void)
