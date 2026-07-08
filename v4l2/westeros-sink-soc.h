@@ -25,6 +25,7 @@
 #include <sys/un.h>
 #include <linux/videodev2.h>
 #include <drm/drm_fourcc.h>
+#include <semaphore.h>
 
 #include "simplebuffer-client-protocol.h"
 
@@ -36,7 +37,7 @@
 #undef USE_GENERIC_AVSYNC
 #endif
 
-#define WESTEROS_SINK_CAPS \
+#define WESTEROS_SINK_CAPS_ENCODED \
       "video/x-h264, " \
       "parsed=(boolean) true, " \
       "alignment=(string) au, " \
@@ -47,6 +48,17 @@
       "systemstream = (boolean) false, " \
       "width=(int) [1,MAX], " "height=(int) [1,MAX]" 
 
+#define WESTEROS_SINK_CAPS_RAW \
+      "video/x-raw, " \
+      "format=(string) { NV12, NV21, I420, YU12 }"
+
+#define WESTEROS_SINK_CAPS \
+      WESTEROS_SINK_CAPS_ENCODED " ; " WESTEROS_SINK_CAPS_RAW
+
+
+#include "westeros-sink-raw.h"
+
+
 typedef struct _WstVideoClientConnection
 {
    GstWesterosSink *sink;
@@ -55,6 +67,15 @@ typedef struct _WstVideoClientConnection
    int socketFd;
    int serverRefreshRate;
    gint64 serverRefreshPeriod;
+   gboolean drmAuthReplyReceived;
+   int drmAuthReplyRc;
+   int drmAuthReplyErr;
+   /*For RAW */
+   #ifdef GLIB_VERSION_2_32
+   GMutex mutex;
+   #else
+   GMutex *mutex;
+   #endif
 } WstVideoClientConnection;
 
 typedef struct _WstPlaneInfo
@@ -158,6 +179,43 @@ typedef struct _WstAFDInfo
    int d2;
 } WstAFDInfo;
 #endif
+
+/* For Raw */
+#ifdef GLIB_VERSION_2_32
+  #define LOCK_CONN( conn ) g_mutex_lock( &((conn)->mutex) );
+  #define UNLOCK_CONN( conn ) g_mutex_unlock( &((conn)->mutex) );
+#else
+  #define LOCK_CONN( conn ) g_mutex_lock( (conn)->mutex );
+  #define UNLOCK_CONN( conn ) g_mutex_unlock( (conn)->mutex );
+#endif
+
+#define WST_NUM_DRM_BUFFERS (20)
+#define WST_MAX_PLANE (2)
+
+typedef struct _WstDrmBuffer
+{
+   int width;
+   int height;
+   int fd[WST_MAX_PLANE];
+   int handle[WST_MAX_PLANE];
+   gsize size[WST_MAX_PLANE];
+   off_t offset[WST_MAX_PLANE];
+   gsize pitch[WST_MAX_PLANE];
+   gint64 frameTime; /* in microseconds */
+   int buffIndex;
+   int frameNumber;
+   int bufferId;
+   bool locked;
+   int lockCount;
+   bool localAlloc;
+   GstBuffer *gstbuf;
+} WstDrmBuffer;
+
+typedef enum _WstSinkMode
+{
+   WST_SINK_MODE_ENCODED = 0,
+   WST_SINK_MODE_RAW
+} WstSinkMode;
 
 struct _GstWesterosSinkSoc
 {
@@ -286,6 +344,10 @@ struct _GstWesterosSinkSoc
    int videoY;
    int videoWidth;
    int videoHeight;
+   uint32_t drmAuthMagic;
+   gboolean haveDrmAuthMagic;
+   gboolean drmAuthenticated;
+   bool renderNode;
 
    guint8 *codecData;
    int codecDataLen;
@@ -312,6 +374,11 @@ struct _GstWesterosSinkSoc
    int dwMode;
    int drmFd;
 
+   WstSinkMode sinkMode;
+   gboolean isAcceptCapsDone;
+   gboolean isReadytoPausedDone;
+   gboolean isDRMInitDone;
+
    void *svp;
 
    #ifdef USE_GENERIC_AVSYNC
@@ -334,6 +401,20 @@ struct _GstWesterosSinkSoc
    #else
    GMutex *mutex;
    #endif
+
+   /* For Raw */
+   uint32_t frameFormatStream;
+   uint32_t frameFormatOut;
+   gboolean haveHardware;
+   gboolean useTunnelled;
+   gboolean expectDummyBuffers;
+   int nextDrmBuffer;
+   bool haveDrmBuffSem;
+   sem_t drmBuffSem;
+   GThread *firstFrameThread;
+   GThread *underflowThread;
+   WstDrmBuffer drmBuffer[WST_NUM_DRM_BUFFERS];
+
 
    pthread_mutex_t reset_lock;
 };
@@ -364,6 +445,8 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink );
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath );
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink );
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query );
-
+WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink *sink, const char *name );
+void wstDestroyVideoClientConnection( WstVideoClientConnection *conn );
+bool wstAuthenticateVideoClientConnection( WstVideoClientConnection *conn );
 #endif
 
