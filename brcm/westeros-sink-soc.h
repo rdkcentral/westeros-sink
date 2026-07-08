@@ -34,7 +34,11 @@
 
 
 #define NUM_CAPTURE_SURFACES (NEXUS_SIMPLE_DECODER_MAX_SURFACES)
-#define SEGSTART_PTS_DIFF_WAIT_MAX_MS (3*1000)  /* making same as AUD_DEC_SEGSTART_DECODESTART_MAX_MS, decoder will wait for PTS under this value */
+
+/* Once a pending segment boundary is queued, a jump in decoder PTS (either direction) larger
+   than this is assumed to be the decoder reaching the new segment's data, rather than normal
+   frame-to-frame PTS advance within the still-draining old segment. */
+#define PTS_DISCONTINUITY_THRESHOLD_MS (500)
 
 #if NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(22,0) || defined NEXUS_RATECONTROL_API_BACKPORT
 #define RATECONTROL_SUPPPORTED (1)
@@ -120,6 +124,21 @@ struct _GstWesterosSinkSoc
    gboolean enableCCPassthru;
    guint lastStartPts45k;
    gboolean chkBufToStartPts;
+
+   /* Position-basis handoff for segment transitions with a still-draining decode backlog.
+      See gst_westeros_sink_soc_render() and updateVideoStatus(). */
+   gint64 lastQueuedPositionSegmentStart;
+   gboolean pendingBoundaryValid;
+   gboolean pendingBoundaryBaselineCaptured;
+   gint64 pendingBoundaryPts45k;
+   gint64 pendingPositionSegmentStart;
+   guint32 pendingBaselineNumDecodeErrors;
+   guint32 pendingBaselineNumDisplayDrops;
+   gint64 activePositionSegmentStart;
+   /* Shadows sink->currentPTS from the last successful poll.  sink->currentPTS itself gets
+      zeroed by the common segment-event handler on every segment change, so it can't be used
+      as the "old segment" baseline for discontinuity detection - this can. */
+   gint64 lastObservedPts90k;
    NEXUS_VideoFormat outputFormat;
    gfloat serverPlaySpeed;
    gfloat clientPlaySpeed;

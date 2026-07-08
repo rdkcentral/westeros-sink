@@ -877,6 +877,11 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.forceAspectRatio= FALSE;
    sink->soc.lastStartPts45k= 0;
    sink->soc.chkBufToStartPts= FALSE;
+   sink->soc.lastQueuedPositionSegmentStart= -1LL;
+   sink->soc.pendingBoundaryValid= FALSE;
+   sink->soc.pendingBoundaryBaselineCaptured= FALSE;
+   sink->soc.activePositionSegmentStart= 0;
+   sink->soc.lastObservedPts90k= 0;
    sink->soc.outputFormat= NEXUS_VideoFormat_eUnknown;
    sink->soc.serverPlaySpeed= 1.0;
    sink->soc.clientPlaySpeed= 1.0;
@@ -1774,6 +1779,40 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       }
       sink->soc.chkBufToStartPts= FALSE;
    }
+
+   /* Record the PTS of the first buffer following each new segment.  This is used by
+      updateVideoStatus() to detect, from the decoder's own reported PTS, when decode has
+      actually reached this segment's data - rather than assuming it happens as soon as the
+      segment event arrives, which may be many seconds before a deep decode backlog drains.
+      See updateVideoStatus() for the other half of this. */
+   if ( GST_BUFFER_PTS_IS_VALID(buffer) )
+   {
+      LOCK(sink);
+      if ( sink->positionSegmentStart != sink->soc.lastQueuedPositionSegmentStart )
+      {
+         if ( sink->soc.pendingBoundaryValid )
+         {
+            /* A new segment arrived before the decoder reached the previously queued one
+               (only ONE pending boundary is tracked, so the older one is discarded here).
+               Reachable if a segment's content is short enough that its whole run fits inside
+               the still-draining decode backlog - e.g. a very low-bitrate ~15s commercial. The
+               position basis for the skipped segment is lost; position may be briefly off until
+               the decoder catches up to this newest boundary. */
+            GST_WARNING("new position-basis boundary (positionSegmentStart %ums) queued while the previous one (%ums) was still pending "
+                        "- decoder had not reached it; short/low-bitrate segment within the backlog? discarding the older boundary",
+                        (guint)GST_TIME_AS_MSECONDS(sink->positionSegmentStart),
+                        (guint)GST_TIME_AS_MSECONDS(sink->soc.pendingPositionSegmentStart));
+         }
+         sink->soc.lastQueuedPositionSegmentStart= sink->positionSegmentStart;
+         sink->soc.pendingBoundaryValid= TRUE;
+         sink->soc.pendingBoundaryBaselineCaptured= FALSE;
+         sink->soc.pendingBoundaryPts45k= (gint64)(GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)) * 45LL);
+         sink->soc.pendingPositionSegmentStart= sink->positionSegmentStart;
+         GST_DEBUG("queued position-basis boundary: bufferPtsMs %u positionSegmentStart %ums",
+                    (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)), (guint)GST_TIME_AS_MSECONDS(sink->positionSegmentStart));
+      }
+      UNLOCK(sink);
+   }
 }
 
 void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
@@ -1823,6 +1862,11 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.presentationStarted= FALSE;
    sink->soc.lastStartPts45k= 0;
+   sink->soc.lastQueuedPositionSegmentStart= -1LL;
+   sink->soc.pendingBoundaryValid= FALSE;
+   sink->soc.pendingBoundaryBaselineCaptured= FALSE;
+   sink->soc.activePositionSegmentStart= sink->positionSegmentStart;
+   sink->soc.lastObservedPts90k= 0;
    UNLOCK(sink);
 
 
@@ -2119,6 +2163,11 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
    sink->soc.clientPlaySpeed= 1.0;
    sink->soc.stoppedForPlaySpeedChange= FALSE;
    sink->soc.lastStartPts45k= 0;
+   sink->soc.lastQueuedPositionSegmentStart= -1LL;
+   sink->soc.pendingBoundaryValid= FALSE;
+   sink->soc.pendingBoundaryBaselineCaptured= FALSE;
+   sink->soc.activePositionSegmentStart= 0;
+   sink->soc.lastObservedPts90k= 0;
    sink->soc.numDecoded= 0;
    sink->soc.numDropped= 0;
    sink->soc.numDroppedOutOfSegment= 0;
@@ -2920,6 +2969,8 @@ static void updateVideoStatus( GstWesterosSink *sink )
          else
          if ( (videoStatus.firstPtsPassed || videoStatus.numDecoded > sink->soc.numDecoded) && (sink->currentPTS/2 != videoStatus.pts) )
          {
+            gboolean boundaryJustCrossed= FALSE;
+
             sink->soc.ignoreDiscontinuity= FALSE;
             sink->soc.numDecoded= videoStatus.numDecoded;
             prevPTS= sink->currentPTS;
@@ -2928,28 +2979,65 @@ static void updateVideoStatus( GstWesterosSink *sink )
                logFrameLatency(sink, videoStatus.pts);
             }
             sink->currentPTS= ((gint64)videoStatus.pts)*2LL;
-            if (sink->prevPositionSegmentStart != sink->positionSegmentStart)
+            if ( sink->soc.pendingBoundaryValid )
             {
-               gboolean useStartPTS = (sink->currentPTS > sink->startPTS) && ((sink->currentPTS - sink->startPTS) < SEGSTART_PTS_DIFF_WAIT_MAX_MS*90LL);
-               GST_DEBUG("currentPTS %"G_GINT64_FORMAT" %"G_GINT64_FORMAT"ms  startPTS %"G_GINT64_FORMAT" %"G_GINT64_FORMAT"ms  useStartPTS %d", sink->currentPTS, sink->currentPTS/90LL, sink->startPTS, sink->startPTS/90LL, useStartPTS);
-               if ( sink->currentPTS == 0 || useStartPTS)
+               if ( !sink->soc.pendingBoundaryBaselineCaptured )
                {
-                  // sometimes the first PTS is not exactly 0, so
-                  // if segStart - first PTS is small, take the segment start as the base for the position
-                  GST_LOG("firstPTS  setting to  startPTS %"G_GINT64_FORMAT" %ums", sink->startPTS, (guint)(sink->startPTS/90LL));
-                  sink->firstPTS= sink->startPTS;
+                  sink->soc.pendingBaselineNumDecodeErrors= videoStatus.numDecodeErrors;
+                  sink->soc.pendingBaselineNumDisplayDrops= videoStatus.numDisplayDrops;
+                  sink->soc.pendingBoundaryBaselineCaptured= TRUE;
+               }
+
+               if ( sink->soc.frameCount == 0 )
+               {
+                  /* nothing decoded yet this session: there is no old segment still draining,
+                     so there is nothing to wait for - behave like a normal tune-in. */
+                  GST_DEBUG("position-basis boundary crossed: initial tune-in, currentPTS %"G_GINT64_FORMAT, sink->currentPTS);
+                  sink->firstPTS= sink->currentPTS;
+                  sink->soc.activePositionSegmentStart= sink->soc.pendingPositionSegmentStart;
+                  sink->prevPositionSegmentStart= sink->positionSegmentStart;
+                  sink->soc.pendingBoundaryValid= FALSE;
+                  boundaryJustCrossed= TRUE;
                }
                else
                {
-                  GST_LOG("firstPTS  setting to  currentPTS %"G_GINT64_FORMAT" %ums", sink->currentPTS, (guint)(sink->currentPTS/90LL));
-                  sink->firstPTS= sink->currentPTS;
+                  /* sink->currentPTS/prevPTS can't be used as the "old segment" baseline here -
+                     the common segment-event handler zeroes sink->currentPTS on every segment
+                     change, so prevPTS would read 0 right after any segment event regardless of
+                     whether the old segment's backlog has actually drained.  lastObservedPts90k
+                     is soc-private and only ever updated below, so it isn't affected by that. */
+                  gint64 delta= sink->currentPTS - sink->soc.lastObservedPts90k;
+                  if ( (delta > PTS_DISCONTINUITY_THRESHOLD_MS*90LL) || (delta < -(PTS_DISCONTINUITY_THRESHOLD_MS*90LL)) )
+                  {
+                     /* Decode PTS has moved off the old segment's smooth progression.  While a
+                        boundary is pending, the only expected cause is that decode has reached
+                        the new segment's data - rebase on the PTS actually observed here, not on
+                        what was predicted at push time, so drops/reorders near the boundary
+                        can't prevent the handoff from happening. */
+                     GST_DEBUG("position-basis boundary crossed: lastObservedPts90k %"G_GINT64_FORMAT" currentPTS %"G_GINT64_FORMAT
+                               " predictedPts45k %"G_GINT64_FORMAT" numDecodeErrors +%u numDisplayDrops +%u",
+                               sink->soc.lastObservedPts90k, sink->currentPTS, sink->soc.pendingBoundaryPts45k,
+                               videoStatus.numDecodeErrors-sink->soc.pendingBaselineNumDecodeErrors,
+                               videoStatus.numDisplayDrops-sink->soc.pendingBaselineNumDisplayDrops);
+                     sink->firstPTS= sink->currentPTS;
+                     sink->soc.activePositionSegmentStart= sink->soc.pendingPositionSegmentStart;
+                     sink->prevPositionSegmentStart= sink->positionSegmentStart;
+                     sink->soc.pendingBoundaryValid= FALSE;
+                     boundaryJustCrossed= TRUE;
+                  }
                }
-               sink->prevPositionSegmentStart = sink->positionSegmentStart;
-               GST_DEBUG("SegmentStart changed! Updating first PTS to 0x%"G_GUINT64_FORMAT" %ums ", sink->firstPTS, (guint)sink->firstPTS/90);
             }
+            sink->soc.lastObservedPts90k= sink->currentPTS;
             if ( sink->currentPTS != 0 || sink->soc.frameCount == 0 )
             {
-               if ( (sink->currentPTS < sink->firstPTS) && (sink->currentPTS > 90000) && prevPTS )
+               if ( sink->soc.pendingBoundaryValid || boundaryJustCrossed )
+               {
+                  /* Either still draining the old segment's backlog (basis untouched, keep
+                     reporting from it), or we just rebased this poll - either way the
+                     loop/rollover heuristics below don't apply; they're for discontinuities
+                     within a single segment, not a pending segment change. */
+               }
+               else if ( (sink->currentPTS < sink->firstPTS) && (sink->currentPTS > 90000) && prevPTS )
                {
                   // If we have hit a discontinuity that doesn't look like rollover, then
                   // treat this as the case of looping a short clip.  Adjust our firstPTS
@@ -2961,10 +3049,10 @@ static void updateVideoStatus( GstWesterosSink *sink )
                {
                   // We have a rollover: Adjust firstPTS to keep our running time correct.
                   sink->firstPTS= sink->currentPTS-(gint64)((uint32_t)sink->currentPTS-(uint32_t)prevPTS);
-                  sink->firstPTS -= ((sink->position-sink->positionSegmentStart)*90LL+GST_MSECOND/2)/GST_MSECOND;
+                  sink->firstPTS -= ((sink->position-sink->soc.activePositionSegmentStart)*90LL+GST_MSECOND/2)/GST_MSECOND;
                   GST_DEBUG("PTS rollover: (%"G_GUINT64_FORMAT" to %"G_GINT64_FORMAT") firstPTS now %"G_GINT64_FORMAT"", prevPTS, sink->currentPTS, sink->firstPTS);
                }
-               sink->position= sink->positionSegmentStart + ((sink->currentPTS - sink->firstPTS) * GST_MSECOND) / 90LL;
+               sink->position= sink->soc.activePositionSegmentStart + ((sink->currentPTS - sink->firstPTS) * GST_MSECOND) / 90LL;
                if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
                {
                   sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
@@ -2999,8 +3087,8 @@ static void updateVideoStatus( GstWesterosSink *sink )
 
                GstMessage *msg= gst_message_new_qos( GST_OBJECT_CAST(sink),
                                                      FALSE, /* live */
-                                                     (sink->position-sink->positionSegmentStart), /* running time */
-                                                     (sink->position-sink->positionSegmentStart), /* stream time */
+                                                     (sink->position-sink->soc.activePositionSegmentStart), /* running time */
+                                                     (sink->position-sink->soc.activePositionSegmentStart), /* stream time */
                                                      sink->position, /* timestamp */
                                                      16000000UL /* duration */ );
                if ( msg )
