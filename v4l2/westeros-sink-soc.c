@@ -5524,7 +5524,8 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                                   * Continue to update frameDisplayCount and first frame signal as usual
                                   */
                                  GST_DEBUG("Stale frameTime: %lld μs before segment start: %lld μs. Skip position update.", frameTime, sink->segment.start/1000LL);
-                                 if (sink->soc.frameOutCount > 0 ) // Note: same pattern of condition checks as the happy-path a few code blocks below.
+                                 GST_DEBUG("AAA: frameOutCount: %d\n",(sink->soc.frameOutCount));
+				 if (sink->soc.frameOutCount > 0 ) // Note: same pattern of condition checks as the happy-path a few code blocks below.
                                  {
                                     if (sink->soc.frameDisplayCount == 0)
                                     {
