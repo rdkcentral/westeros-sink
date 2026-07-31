@@ -2572,6 +2572,12 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
    GST_DEBUG("hasEOSEvents %d frameInCount %d", sink->soc.hasEOSEvents, sink->soc.frameInCount);
    if ( !sink->soc.hasEOSEvents || (sink->soc.frameInCount <= 2) )
    {
+      if ( sink->soc.frameInCount == 0 )
+      {
+         GST_DEBUG("no frames decoded: send EOS immediately");
+         gst_westeros_sink_eos_detected( sink );
+         return;
+      }
       GST_DEBUG("set decoderEOS");
       sink->soc.decoderEOS= 1;
    }
