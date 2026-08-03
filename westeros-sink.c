@@ -2125,6 +2125,10 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                      gst_westeros_sink_eos_detected( sink );
                   }
                }
+               else
+               {
+                  passToDefault= TRUE;
+               }
             }
          }
          break;
