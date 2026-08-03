@@ -2127,7 +2127,13 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                }
                else
                {
-                  passToDefault= TRUE;
+                  LOCK( sink );
+                  eosDetected= sink->eosDetected;
+                  UNLOCK( sink );
+                  if ( !eosDetected )
+                  {
+                     passToDefault= TRUE;
+                  }
                }
             }
          }
