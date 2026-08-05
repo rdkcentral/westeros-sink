@@ -1087,7 +1087,11 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    sink->soc.frameStepOnPreroll= FALSE;
+   #ifdef ENABLE_LOW_MEMORY_MODE
+   sink->soc.lowMemoryMode= TRUE;
+   #else
    sink->soc.lowMemoryMode= FALSE;
+   #endif
    sink->soc.forceAspectRatio= FALSE;
    sink->soc.secureVideo= FALSE;
    sink->soc.useDmabufOutput= FALSE;
@@ -1219,6 +1223,12 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
       sink->soc.lowMemoryMode= TRUE;
       printf("westeros-sink: low memory mode\n");
    }
+   #ifdef ENABLE_LOW_MEMORY_MODE
+   else
+   {
+      printf("westeros-sink: compile-time low memory mode\n");
+   }
+   #endif
 
    #ifdef USE_AMLOGIC_MESON_MSYNC
    printf("westeros-sink: msync enabled\n");
