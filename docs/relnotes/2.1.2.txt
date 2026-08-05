@@ -9,6 +9,7 @@ Tag: 2.1.2
 Changes:
 
 * Raw Video Handling inside westeros-sink soc with DRM authentication
+* Bringing low memory mode functionality
 
 
 Dependencies

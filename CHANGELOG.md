@@ -7,6 +7,7 @@ All notable changes to westeros-sink are documented in this file.
 
 ### Changed
 - Raw video handling inside westeros-sink soc with DRM authentication
+- Bringing low memory mode functionality
 
 ## [2.1.1] - 2026-04-27
 **Tag:** 2.1.1
