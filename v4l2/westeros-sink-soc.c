@@ -2340,8 +2340,9 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       if ( sink->soc.lowLatencyMode && g_vcodec )
       {
          wstLowLatencyModePushFrame(sink, buffer);
-         ++sink->soc.frameInCount;
-	 GST_ERROR("7409--> frameInCount value before start video:%d\n",sink->soc.frameInCount);
+wstLowLatencyModePushFrame(sink, buffer);
+++sink->soc.frameInCount;
+GST_DEBUG("AMLOGIC-7409: frameInCount before start video: %d", sink->soc.frameInCount);
          sink->soc.lastBuffer= buffer;
          LOCK(sink);
          if ( !sink->videoStarted && (!sink->rm || sink->resAssignedId >= 0) )
