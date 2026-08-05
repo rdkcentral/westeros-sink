@@ -7398,8 +7398,8 @@ capture_start:
                {
                   gint64 now= g_get_monotonic_time();
                   float frameRate= (sink->soc.frameRate != 0.0 ? sink->soc.frameRate : 30.0);
-		  GST_ERROR("7409--> frameInCount: %d, frameInCountAtDecodeStart:%d\n",sink->soc.frameInCount, sink->soc.frameInCountAtDecodeStart);
-g                 float frameDelay= (sink->soc.frameInCount - sink->soc.frameInCountAtDecodeStart)/ frameRate;
+                  float frameDelay= (sink->soc.frameInCount - sink->soc.frameInCountAtDecodeStart)/ frameRate;
+				  GST_ERROR("7409--> frameInCount: %d, frameInCountAtDecodeStart:%d\n",sink->soc.frameInCount, sink->soc.frameInCountAtDecodeStart);
                   GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
