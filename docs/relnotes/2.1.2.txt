@@ -11,7 +11,7 @@ Changes:
 * Raw Video Handling inside westeros-sink soc with DRM authentication
 
 
-Depedencies
+Dependencies
 ------------
 wayland >= 1.6.0
 libxkbcommon >= 0.8.3
