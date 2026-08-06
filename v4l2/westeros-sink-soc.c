@@ -35,6 +35,7 @@
 #include <dlfcn.h>
 
 #ifdef USE_GST_VIDEO
+#include <gst/video/gstvideometa.h>
 #include <gst/video/video-color.h>
 #endif
 
@@ -200,14 +201,16 @@ static int wstFindOutputBuffer( GstWesterosSink *sink, int fd );
 static void wstLockOutputBuffer( GstWesterosSink *sink, int buffIndex );
 static bool wstUnlockOutputBuffer( GstWesterosSink *sink, int buffIndex );
 static void wstRequeueOutputBuffer( GstWesterosSink *sink, int buffIndex );
-static WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink *sink, const char *name );
-static void wstDestroyVideoClientConnection( WstVideoClientConnection *conn );
+WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink *sink, const char *name );
+void wstDestroyVideoClientConnection( WstVideoClientConnection *conn );
+static void wstSendPauseVideoClientConnection( WstVideoClientConnection *conn, bool pause );
 static void wstSendResourceVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendFlushVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendEosVideoClientConnection( WstVideoClientConnection *conn );
 static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, int buffIndex );
 static void wstSendFrameAdvanceVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn );
+static void wstSendRateVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendKeepFrameVideoClientConnection( WstVideoClientConnection *conn );
 static bool wstWaitForLastFrame( GstWesterosSink *sink );
 static void wstDecoderReset( GstWesterosSink *sink, bool hard );
@@ -250,6 +253,7 @@ static void wstLowLatencyModeDeinit();
 static void wstLowLatencyModePushFrame(GstWesterosSink *sink, GstBuffer *buffer);
 static void wstLowLatencyModeSetVideoRect(GstWesterosSink *sink);
 static int getDisplayWidth();
+static gboolean wstSocEnsureReadyToPausedInitialized( GstWesterosSink *sink );
 
 #ifdef USE_AMLOGIC_MESON
 #include "meson_drm.h"
@@ -346,13 +350,13 @@ static void avProgLog( long long nanoTime, int syncGroup, const char *edge, cons
     {
         char msg[FTRACE_BUF_SIZE];
 
-        snprintf(msg, FTRACE_BUF_SIZE, "AVPROG: [%6u.%06u] %lld %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
+        snprintf(msg, FTRACE_BUF_SIZE, "AVPROG: [%6lu.%06lu] %lld %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
         prctl(PR_SET_FTRACE_MARKER, msg, 0, 0, 0);
     }
 #else
     if ( gAvProgOut )
     {
-        fprintf(gAvProgOut, "AVPROG: [%6u.%06u] %lld %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
+        fprintf(gAvProgOut, "AVPROG: [%6lu.%06lu] %lld %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
     } 
 #endif
 }
@@ -458,7 +462,7 @@ static void wstPushPixelAspectRatio( GstWesterosSink *sink, double pixelAspectRa
          sink->soc.parNext[sink->soc.parNextCount].frameWidth= frameWidth;
          sink->soc.parNext[sink->soc.parNextCount].frameHeight= frameHeight;
          ++sink->soc.parNextCount;
-         GST_DEBUG("push pixelAspectRatio %f (%dx%d) count %d capactiy %d",
+         GST_DEBUG("push pixelAspectRatio %f (%dx%d) count %d capacity %d",
                  pixelAspectRatio, frameWidth, frameHeight, sink->soc.parNextCount, sink->soc.parNextCapacity);
       }
    }
@@ -519,6 +523,8 @@ static void wstFlushPixelAspectRatio( GstWesterosSink *sink, bool full )
 #ifdef USE_GST_AFD
 static void wstAddAFDInfo( GstWesterosSink *sink, GstBuffer *buffer )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    GstVideoAFDMeta* afd;
    GstVideoBarMeta* bar;
 
@@ -606,6 +612,11 @@ static void wstAddAFDInfo( GstWesterosSink *sink, GstBuffer *buffer )
          }
       }
    }
+   }
+   else
+   {
+      wstSetAFDInfo(sink, buffer);
+   }
 }
 
 static void wstUpdateAFDInfo( GstWesterosSink *sink )
@@ -641,6 +652,8 @@ static void wstUpdateAFDInfo( GstWesterosSink *sink )
 
 static void wstFlushAFDInfo( GstWesterosSink *sink, bool full )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    sink->soc.afdInfoCount= 0;
    GST_DEBUG("flush AFD info");
    if ( full && sink->soc.afdInfo )
@@ -649,6 +662,9 @@ static void wstFlushAFDInfo( GstWesterosSink *sink, bool full )
       sink->soc.afdInfo= 0;
       sink->soc.afdInfoCapacity= 0;
    }
+   }
+   else
+      GST_DEBUG("flush AFD info");
    memset( &sink->soc.afdActive, 0, sizeof(WstAFDInfo));
 }
 #endif
@@ -938,6 +954,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 {
    gboolean result= FALSE;
    const char *env;
+   int rc;
 
    #ifdef GLIB_VERSION_2_32
    g_mutex_init( &sink->soc.mutex );
@@ -1070,7 +1087,11 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    sink->soc.frameStepOnPreroll= FALSE;
+   #ifdef ENABLE_LOW_MEMORY_MODE
+   sink->soc.lowMemoryMode= TRUE;
+   #else
    sink->soc.lowMemoryMode= FALSE;
+   #endif
    sink->soc.forceAspectRatio= FALSE;
    sink->soc.secureVideo= FALSE;
    sink->soc.useDmabufOutput= FALSE;
@@ -1115,6 +1136,43 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->useSegmentPosition= TRUE;
 
    sink->soc.lowLatencyMode = FALSE;
+
+   /*For Raw*/
+   sink->soc.frameFormatStream= 0;
+   sink->soc.frameFormatOut= 0;
+   sink->soc.haveHardware= FALSE;
+   sink->soc.useTunnelled= FALSE;
+   sink->soc.expectDummyBuffers= FALSE;
+   sink->soc.nextDrmBuffer= 0;
+   sink->soc.firstFrameThread= NULL;
+   sink->soc.underflowThread= NULL;
+   {
+      int i;
+      for( i= 0; i < WST_NUM_DRM_BUFFERS; ++i )
+      {
+         sink->soc.drmBuffer[i].buffIndex= i;
+         sink->soc.drmBuffer[i].locked= false;
+         sink->soc.drmBuffer[i].lockCount= 0;
+         sink->soc.drmBuffer[i].width= -1;
+         sink->soc.drmBuffer[i].height= -1;
+         sink->soc.drmBuffer[i].fd[0]= -1;
+         sink->soc.drmBuffer[i].fd[1]= -1;
+         sink->soc.drmBuffer[i].handle[0]= 0;
+         sink->soc.drmBuffer[i].handle[1]= 0;
+         sink->soc.drmBuffer[i].gstbuf= 0;
+         sink->soc.drmBuffer[i].localAlloc= false;
+      }
+   }
+   rc= sem_init( &sink->soc.drmBuffSem, 0, WST_NUM_DRM_BUFFERS );
+   if ( !rc )
+   {
+      sink->soc.haveDrmBuffSem= true;
+   }
+   else
+   {
+      sink->soc.haveDrmBuffSem= false;
+      GST_ERROR( "sem_init failed for drmBuffSem rc %d", rc);
+   }
 
    #ifdef USE_GST1
    sink->soc.chainOrg= 0;
@@ -1165,6 +1223,12 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
       sink->soc.lowMemoryMode= TRUE;
       printf("westeros-sink: low memory mode\n");
    }
+   #ifdef ENABLE_LOW_MEMORY_MODE
+   else
+   {
+      printf("westeros-sink: compile-time low memory mode\n");
+   }
+   #endif
 
    #ifdef USE_AMLOGIC_MESON_MSYNC
    printf("westeros-sink: msync enabled\n");
@@ -1191,6 +1255,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    if ( sink->soc.devname )
    {
       free( sink->soc.devname );
@@ -1208,6 +1274,9 @@ void gst_westeros_sink_soc_term( GstWesterosSink *sink )
    #endif
 
    pthread_mutex_destroy(&sink->soc.reset_lock);
+   }
+   else
+      gst_westeros_sink_raw_term( sink );
 }
 
 void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -1545,63 +1614,22 @@ void gst_westeros_sink_soc_registryHandleGlobalRemove( GstWesterosSink *sink,
 
 gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
-   gboolean result= FALSE;
-
+   /*Move to Ready_to_paused as we need to know SinkMode Before we start Initialization */
    WESTEROS_UNUSED(passToDefault);
-
-   avProgInit();
-
-   #ifdef WESTEROS_SINK_SVP
-   wstSVPInit( sink );
-   #endif
-
-   result= TRUE;
-
-   return result;
+   return TRUE;
 }
 
 gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
-   gboolean result= FALSE;
-
+   /*Move to function wstSocEnsureReadyToPausedInitialized, to wait for Caps Event */
    WESTEROS_UNUSED(passToDefault);
+   gboolean result= TRUE;
 
-   if ( sinkAcquireResources( sink ) )
-   {
-      wstStartEvents( sink );
+   LOCK(sink);
+   sink->soc.isReadytoPausedDone= TRUE;
+   UNLOCK(sink);
 
-      if ( !sink->soc.useCaptureOnly )
-      {
-         sink->soc.conn= wstCreateVideoClientConnection( sink, DEFAULT_VIDEO_SERVER );
-         if ( !sink->soc.conn )
-         {
-            GST_ERROR("unable to connect to video server (%s)", DEFAULT_VIDEO_SERVER );
-            sink->soc.useCaptureOnly= TRUE;
-            sink->soc.captureEnabled= TRUE;
-            printf("westeros-sink: no video server - capture only\n");
-            if ( sink->vpc )
-            {
-               wl_vpc_destroy( sink->vpc );
-               sink->vpc= 0;
-            }
-         }
-      }
-
-      LOCK(sink);
-      sink->startAfterCaps= TRUE;
-      sink->soc.videoPlaying= TRUE;
-      sink->soc.videoPaused= TRUE;
-      sink->soc.videoServerPaused= FALSE;
-      UNLOCK(sink);
-
-      result= TRUE;
-   }
-   else
-   {
-      GST_ERROR("gst_westeros_sink_ready_to_paused: sinkAcquireResources failed");
-   }
-
-   return result;
+   return wstSocEnsureReadyToPausedInitialized( sink );
 }
 
 gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
@@ -1618,6 +1646,10 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
       sink->soc.updateSession= TRUE;
    }
    UNLOCK( sink );
+   if (WST_SINK_MODE_RAW == sink->soc.sinkMode)
+   {
+      wstSendPauseVideoClientConnection( sink->soc.conn, false );
+   }
 
    return TRUE;
 }
@@ -1628,6 +1660,11 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
    sink->soc.videoPlaying= FALSE;
    sink->soc.videoPaused= TRUE;
    UNLOCK( sink );
+
+   if ((sink->soc.sinkMode == WST_SINK_MODE_RAW))
+   {
+      wstSendPauseVideoClientConnection( sink->soc.conn, true );
+   }
 
    if (gst_base_sink_is_async_enabled(GST_BASE_SINK(sink)))
    {
@@ -1651,6 +1688,8 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
 
 gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    gboolean keepLastFrame;
 
    /* ensure cleanup happens but preserve
@@ -1678,12 +1717,21 @@ gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean 
    {
       *passToDefault= false;
    }
+   }
+   else
+      gst_westeros_sink_raw_paused_to_ready(sink, passToDefault);
+
+   /*As this is session Exit- Reset Here */
+   sink->soc.isAcceptCapsDone = FALSE;
+   sink->soc.isReadytoPausedDone = FALSE;
 
    return TRUE;
 }
 
 gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    WESTEROS_UNUSED(sink);
    gboolean keepLastFrame;
 
@@ -1712,8 +1760,29 @@ gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *p
    avProgTerm();
 
    *passToDefault= false;
+   }
+   else
+      gst_westeros_sink_raw_ready_to_null(sink, passToDefault);
+
+   /*As this is session Exit- Reset Here */
+   sink->soc.isAcceptCapsDone = FALSE;
+   sink->soc.isReadytoPausedDone = FALSE;
 
    return TRUE;
+}
+
+static WstSinkMode wstDetectSinkMode( GstCaps *caps )
+{
+   GstStructure *structure= gst_caps_get_structure( caps, 0 );
+   const gchar  *mime    = gst_structure_get_name( structure );
+
+   GST_DEBUG("wstDetectSinkMode: mime=%s", mime);
+
+   if ( (g_str_has_prefix( mime, "video/x-raw" )) || (g_str_has_prefix( mime, "video/x-westeros-raw" )) )
+   {
+      return WST_SINK_MODE_RAW;
+   }
+   return WST_SINK_MODE_ENCODED;
 }
 
 gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps )
@@ -1729,6 +1798,9 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
    gchar *str= gst_caps_to_string(caps);
    g_print("westeros-sink: caps: (%s)\n", str);
    g_free( str );
+
+   sink->soc.sinkMode = wstDetectSinkMode( caps );
+   GST_DEBUG("gst_westeros_sink_soc_accept_caps: detected sink mode %d (%s)", sink->soc.sinkMode, sink->soc.sinkMode == WST_SINK_MODE_RAW ? "RAW" : "ENCODED");
 
    structure= gst_caps_get_structure(caps, 0);
    if( structure )
@@ -1794,6 +1866,17 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
             sink->soc.inputFormat= V4L2_PIX_FMT_MJPEG;
             result= TRUE;
          }
+         else if ( (len == 11) && !strncmp("video/x-raw", mime, len) )
+         {
+            result= TRUE;
+         }
+         else if ( (len == 20) && !strncmp("video/x-westeros-raw", mime, len) )
+         {
+            sink->soc.useTunnelled= TRUE;
+            sink->soc.expectDummyBuffers= TRUE;
+            sink->soc.frameFormatStream= DRM_FORMAT_NV12;
+            result= TRUE;
+         }
          else
          {
             GST_ERROR("gst_westeros_sink_soc_accept_caps: not accepting caps (%s)", mime );
@@ -1808,6 +1891,8 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
 
       if ( result == TRUE )
       {
+         if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+         {
          gint num, denom, width, height;
          double pixelAspectRatioNext;
          int hdrColorimetryPrev[4];
@@ -2098,6 +2183,26 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
             }
             pthread_mutex_unlock(&sink->soc.reset_lock);
          }
+         }
+         else
+         {
+            /* As For Raw Caps, we need to set Width, Height, Framerate and Format From Caps. Handling it in westeros-sink-raw.c */
+            result = gst_westeros_sink_raw_setting_capabilities( sink, caps );
+            if (!result)
+            {
+               GST_DEBUG("gst_westeros_sink_soc_accept_caps: Failed to set RAW capabilities for Format, FrameRate");
+               return result;
+            }
+         }
+      }
+      sink->soc.isAcceptCapsDone= TRUE;
+   }
+   if ( result && sink->soc.isAcceptCapsDone )
+   {
+      if ( !wstSocEnsureReadyToPausedInitialized( sink ) )
+      {
+         GST_DEBUG("gst_westeros_sink_soc_accept_caps: wstSocEnsureReadyToPausedInitialized failed - ready_to_paused yet to occur");
+         result= FALSE;
       }
    }
 
@@ -2112,6 +2217,8 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 
 void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    #ifdef ENABLE_SW_DECODE
    if ( swIsSWDecode( sink ) )
    {
@@ -2470,6 +2577,11 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       }
       UNLOCK(sink);
    }
+   }
+   else
+   {
+      gst_westeros_sink_raw_render( sink, buffer );//call Raw Render Function
+   }
 
 exit:
    return;
@@ -2477,6 +2589,8 @@ exit:
 
 void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    GST_DEBUG("gst_westeros_sink_soc_flush");
 
    pthread_mutex_lock(&sink->soc.reset_lock);
@@ -2505,10 +2619,18 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    UNLOCK(sink);
 
    pthread_mutex_unlock(&sink->soc.reset_lock);
+   }
+   else
+   {
+      gst_westeros_sink_raw_flush( sink );//call Raw Flush Function
+   }
 }
 
 gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
 {
+   if (sink->soc.sinkMode == WST_SINK_MODE_RAW)
+      return TRUE;  // RAW is no-op
+
    gboolean result= FALSE;
    int rc;
 
@@ -2562,6 +2684,9 @@ exit:
 
 void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
 {
+   if (sink->soc.sinkMode == WST_SINK_MODE_RAW)
+   return;  // RAW is no-op
+
    WESTEROS_UNUSED(sink);
    if ( swIsSWDecode( sink ) )
    {
@@ -2594,6 +2719,8 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    if ( useGfxPath && sink->soc.lowMemoryMode )
    {
       g_print("NOTE: Attempt to use video textures in low memory mode ignored\n");
@@ -2642,10 +2769,17 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
       wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
       wstSetTextureCrop( sink, vx, vy, vw, vh );
    }
+   }
+   else
+   {
+      gst_westeros_sink_raw_set_video_path( sink, useGfxPath );//call Raw Set Video Path Function
+   }
 }
 
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    bool needUpdate= true;
    int vx, vy, vw, vh;
    vx= sink->soc.videoX;
@@ -2723,6 +2857,11 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
       else
         wstSendRectVideoClientConnection(sink->soc.conn);
    }
+   }
+   else
+   {
+      gst_westeros_sink_raw_update_video_position( sink );//call Raw Update Video Position Function
+   }
 }
 
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
@@ -2735,6 +2874,8 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
 
 static void wstSinkSocStopVideo( GstWesterosSink *sink )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    if ( sink->soc.videoOutputThread )
    {
       sink->soc.quitVideoOutputThread= TRUE;
@@ -2854,6 +2995,11 @@ static void wstSinkSocStopVideo( GstWesterosSink *sink )
       sink->soc.sb= 0;
    }
    UNLOCK(sink);
+   }
+   else
+   {
+      wstSinkRawStopVideo( sink );
+   }
 }
 
 static void wstBuildSinkCaps( GstWesterosSinkClass *klass, GstWesterosSink *dummySink )
@@ -2969,6 +3115,18 @@ static void wstBuildSinkCaps( GstWesterosSinkClass *klass, GstWesterosSink *dumm
             capsTemp =0;
          }
       }
+      /* Always advertise RAW caps for the unified SOC/RAW sink path. */
+      capsTemp= gst_caps_from_string(
+                                       "video/x-raw, " \
+                                       "format=(string) { NV12, I420, YU12 } ; " \
+                                       "video/x-westeros-raw"
+                                    );
+      if ( capsTemp )
+      {
+         gst_caps_append( caps, capsTemp );
+         capsTemp =0;
+      }   
+
 
       padTemplate= gst_pad_template_new( "sink",
                                          GST_PAD_SINK,
@@ -4371,7 +4529,7 @@ static void wstRequeueOutputBuffer( GstWesterosSink *sink, int buffIndex )
    }
 }
 
-static WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink *sink, const char *name )
+WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink *sink, const char *name )
 {
    WstVideoClientConnection *conn= 0;
    int rc;
@@ -4424,7 +4582,10 @@ static WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink
 
       wstSendResourceVideoClientConnection( conn );
 
-      wstSendKeepFrameVideoClientConnection( conn );
+      if(WST_SINK_MODE_RAW != sink->soc.sinkMode)
+      {
+         wstSendKeepFrameVideoClientConnection( conn );
+      }
 
       error= false;
    }
@@ -4440,7 +4601,7 @@ exit:
    return conn;
 }
 
-static void wstDestroyVideoClientConnection( WstVideoClientConnection *conn )
+void wstDestroyVideoClientConnection( WstVideoClientConnection *conn )
 {
    if ( conn )
    {
@@ -4863,7 +5024,10 @@ static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn )
       vh= sink->soc.videoHeight;
       if ( needBounds(sink) )
       {
-         wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, true );
+         if (sink->soc.sinkMode == WST_SINK_MODE_ENCODED)
+            wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, true );
+         else
+            wstGetVideoBoundsRaw( sink, &vx, &vy, &vw, &vh);
       }
 
       msg.msg_name= NULL;
@@ -5269,6 +5433,8 @@ static GstElement* wstFindAudioSink( GstWesterosSink *sink )
 
 static void wstSetSessionInfo( GstWesterosSink *sink )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    #if defined USE_AMLOGIC_MESON || defined USE_GENERIC_AVSYNC
    if ( sink->soc.conn )
    {
@@ -5388,6 +5554,9 @@ static void wstSetSessionInfo( GstWesterosSink *sink )
       }
    }
    #endif
+   }
+   else
+      wstSetSessionInfoRaw( sink );
 }
 
 static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *conn )
@@ -5395,6 +5564,8 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
    if ( conn )
    {
       GstWesterosSink *sink= conn->sink;
+      if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+      {
       struct pollfd pfd;
       int rc;
 
@@ -5634,12 +5805,17 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
             }
          }
       }
+      }
+      else
+         wstProcessMessagesVideoClientConnectionRaw( conn );
    }
 }
 
 static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, int buffIndex )
 {
    bool result= false;
+   if (WST_SINK_MODE_RAW != conn->sink->soc.sinkMode)
+   {
    GstWesterosSink *sink= conn->sink;
    int sentLen;
 
@@ -5840,6 +6016,9 @@ exit:
          close( fdToSend2 );
       }
    }
+   }
+   else
+      return wstSendFrameVideoClientConnectionRaw( conn, buffIndex );
    return result;
 }
 
@@ -5971,13 +6150,6 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
    sink->soc.codecDataInjected= FALSE;
    UNLOCK(sink);
 }
-
-typedef struct bufferInfo
-{
-   GstWesterosSink *sink;
-   int buffIndex;
-   int cohort;
-} bufferInfo;
 
 static void buffer_release( void *data, struct wl_buffer *buffer )
 {
@@ -6320,6 +6492,8 @@ static void wstGetVideoBounds(GstWesterosSink *sink, int *x, int *y, int *w, int
 
 static void wstSetTextureCrop( GstWesterosSink *sink, int vx, int vy, int vw, int vh )
 {
+   if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
+   {
    GST_DEBUG("wstSetTextureCrop: vx %d vy %d vw %d vh %d window(%d, %d, %d, %d) display(%dx%d)",
              vx, vy, vw, vh, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight, sink->displayWidth, sink->displayHeight);
    if ( (sink->displayWidth != -1) && (sink->displayHeight != -1) &&
@@ -6444,6 +6618,9 @@ static void wstSetTextureCrop( GstWesterosSink *sink, int vx, int vy, int vw, in
       GST_INFO("wstSetTextureCrop set geometry: %d, %d, %d, %d", vx, vy, vw, vh);
       wl_vpc_surface_set_geometry( sink->vpcSurface, vx, vy, vw, vh );
    }
+   }
+   else
+      wstSetTextureCropRaw( sink, vx, vy, vw, vh );
 }
 
 static void wstProcessTextureSignal( GstWesterosSink *sink, int buffIndex )
@@ -7613,6 +7790,16 @@ static GstFlowReturn prerollSinkSoc(GstBaseSink *base_sink, GstBuffer *buffer)
 {
    GstWesterosSink *sink= GST_WESTEROS_SINK(base_sink);
 
+   if ( sink->rejectPrerollBuffers )
+   {
+      GST_DEBUG("prerollSinkSoc: reject preroll buffers");
+      #ifdef USE_GST1
+      return GST_FLOW_FLUSHING;
+      #else
+      return GST_FLOW_WRONG_STATE;
+      #endif
+   }
+
    if ( swIsSWDecode( sink ) )
    {
       #ifdef ENABLE_SW_DECODE
@@ -7653,7 +7840,6 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
    int rc, len;
    struct v4l2_exportbuffer eb;
 
-   LOCK(sink);
    GST_DEBUG("sinkAcquireVideo: enter");
    if ( sink->rm && sink->resAssignedId >= 0 )
    {
@@ -7731,7 +7917,6 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
 
 exit:
    GST_DEBUG("sinkAcquireVideo: exit: %d", result);
-   UNLOCK(sink);
 
    return result;
 }
@@ -8510,4 +8695,121 @@ static GstStructure *wstSinkGetStats( GstWesterosSink * sink )
    return gst_structure_new ("application/x-gst-base-sink-stats",
       "dropped", G_TYPE_UINT64, (guint64)sink->soc.numDropped,
       "rendered", G_TYPE_UINT64, (guint64)sink->soc.frameDisplayCount, NULL);
+}
+
+static gboolean wstSocEnsureReadyToPausedInitialized( GstWesterosSink *sink )
+{
+   LOCK(sink);
+   GST_DEBUG("wstSocEnsureReadyToPausedInitialized: isAcceptCapsDone %d isReadytoPausedDone %d sinkMode %d",
+             sink->soc.isAcceptCapsDone,
+             sink->soc.isReadytoPausedDone,
+             sink->soc.sinkMode);
+   gboolean result = FALSE;
+
+   /* Run init only after both accept_caps and READY->PAUSED have completed. */
+   if ( sink->soc.isAcceptCapsDone && sink->soc.isReadytoPausedDone )
+   {
+      sink->soc.isAcceptCapsDone = FALSE;
+      sink->soc.isReadytoPausedDone = FALSE;
+
+      if ( sink->soc.sinkMode == WST_SINK_MODE_ENCODED )
+      {
+
+         avProgInit();
+
+         #ifdef WESTEROS_SINK_SVP
+         wstSVPInit( sink );
+         #endif
+
+         if ( sinkAcquireResources( sink ) )
+         {
+            wstStartEvents( sink );
+
+            if ( !sink->soc.useCaptureOnly && !sink->soc.conn )
+            {
+               sink->soc.conn= wstCreateVideoClientConnection( sink, DEFAULT_VIDEO_SERVER );
+               if ( !sink->soc.conn )
+               {
+                  GST_ERROR("unable to connect to video server (%s)", DEFAULT_VIDEO_SERVER );
+                  sink->soc.useCaptureOnly= TRUE;
+                  sink->soc.captureEnabled= TRUE;
+                  printf("westeros-sink: no video server - capture only\n");
+                  if ( sink->vpc )
+                  {
+                     wl_vpc_destroy( sink->vpc );
+                     sink->vpc= 0;
+                  }
+               }
+            }            
+         }
+         else
+         {
+            GST_ERROR("wstSocEnsureReadyToPausedInitialized: sinkAcquireResources failed");
+            UNLOCK(sink);
+            return FALSE;
+         }
+         sink->startAfterCaps= TRUE;
+         sink->soc.videoPlaying= TRUE;
+         sink->soc.videoPaused= TRUE;
+         sink->soc.videoServerPaused= FALSE;
+         result = TRUE;
+
+      }
+      else if ( sink->soc.sinkMode == WST_SINK_MODE_RAW )
+      {
+         gboolean passToDefault= TRUE;
+         result = gst_westeros_sink_raw_resource_init( sink, &passToDefault );
+         if ( !result )
+         {
+            GST_ERROR("wstSocEnsureReadyToPausedInitialized: RAW drmInit failed");
+            UNLOCK(sink);
+            return FALSE;
+         }
+         /* FLOW 1: useCaptureOnly=false && no connection exists - Create connection and authenticate */
+         if ( !sink->soc.useCaptureOnly && !sink->soc.conn )
+         {
+            sink->soc.conn= wstCreateVideoClientConnection( sink, DEFAULT_VIDEO_SERVER );
+            if ( sink->soc.conn && !sink->soc.drmAuthenticated )
+            {
+               if ( !wstAuthenticateVideoClientConnection( sink->soc.conn ) )
+               {
+                  GST_ERROR("unable to authenticate DRM client with video server");
+                  wstDestroyVideoClientConnection( sink->soc.conn );
+                  sink->soc.conn= 0;
+               }
+            }
+            if ( !sink->soc.conn )
+            {
+               GST_ERROR("unable to connect to video server (%s)", DEFAULT_VIDEO_SERVER );
+               sink->soc.useCaptureOnly= TRUE;
+               sink->soc.captureEnabled= TRUE;
+               printf("westeros-sink: no video server - capture only\n");
+               if ( sink->vpc )
+               {
+                  wl_vpc_destroy( sink->vpc );
+                  sink->vpc= 0;
+               }
+            }
+         }
+
+         sink->startAfterCaps= TRUE;
+         sink->soc.videoPlaying= TRUE;
+         sink->soc.videoPaused= FALSE;
+         result = TRUE;
+      }
+      else
+      {
+         GST_ERROR("wstSocEnsureReadyToPausedInitialized: unknown sink mode %d", sink->soc.sinkMode);
+         UNLOCK(sink);
+         return FALSE;
+      }
+   }
+   else //on Failure of Accept_caps or Ready_to_paused Execution, this should defer
+   {
+      GST_DEBUG("wstSocEnsureReadyToPausedInitialized: Caps Event and ready_to_pause yet to in sync");
+      result = TRUE;
+   }
+   UNLOCK(sink);
+
+   return result;
 }
