@@ -2105,10 +2105,8 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             gboolean eosDetected= sink->eosDetected;
             sink->eosEventSeen= TRUE;
             UNLOCK( sink );
-            GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: EOS event received: eosDetected %d", eosDetected);
             if ( eosDetected )
             {
-               GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: EOS already detected, passing to default handler");
                passToDefault= TRUE;
             }
             else
@@ -2139,11 +2137,6 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                }
                else
                {
-<<<<<<< HEAD
-                  GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: EOS in state %s (not playing/pending-playing), passing to default handler",
-                                   gst_element_state_get_name(state));
-                  passToDefault= TRUE;
-=======
                   LOCK( sink );
                   eosDetected= sink->eosDetected;
                   UNLOCK( sink );
@@ -2151,7 +2144,6 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                   {
                      passToDefault= TRUE;
                   }
->>>>>>> 41b86a1d32d668354c0dd2384faaf30c891fdb8b
                }
             }
          }
