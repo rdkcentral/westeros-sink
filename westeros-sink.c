@@ -2109,43 +2109,6 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             {
                passToDefault= TRUE;
             }
-            else
-            {
-               /* GST_OBJECT_LOCK required to safely read current_state and
-                * pending_state from the GstElement object. */
-               GST_OBJECT_LOCK(sink);
-               GstState state= GST_STATE(sink);
-               GstState pending= GST_STATE_PENDING(sink);
-               GST_OBJECT_UNLOCK(sink);
-               GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: EOS state %s pending %s",
-                                gst_element_state_get_name(state), gst_element_state_get_name(pending));
-               gst_westeros_sink_soc_eos_event( sink );
-               if ( (state == GST_STATE_PLAYING) || (pending == GST_STATE_PLAYING) )
-               {
-                  LOCK( sink );
-                  eosDetected= sink->eosDetected;
-                  UNLOCK( sink );
-                  if ( !eosDetected )
-                  {
-                     GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: EOS during preroll to playing: completing preroll and posting EOS");
-                     gst_westeros_sink_eos_detected( sink );
-                  }
-                  else
-                  {
-                     GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: EOS already detected by SOC, skipping eos_detected call");
-                  }
-               }
-               else
-               {
-                  LOCK( sink );
-                  eosDetected= sink->eosDetected;
-                  UNLOCK( sink );
-                  if ( !eosDetected )
-                  {
-                     passToDefault= TRUE;
-                  }
-               }
-            }
          }
          break;
          

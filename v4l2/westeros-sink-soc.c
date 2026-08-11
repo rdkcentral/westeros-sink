@@ -2711,6 +2711,30 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
          GST_DEBUG("VIDIOC_DECODER_CMD V4L2_DEC_CMD_STOP rc %d errno %d",rc, errno);
       }
    }
+   else
+   {
+      GstState state, pending;
+      gboolean eosDetected;
+      GST_OBJECT_LOCK(sink);
+      state= GST_STATE(sink);
+      pending= GST_STATE_PENDING(sink);
+      GST_OBJECT_UNLOCK(sink);
+      if ( (state == GST_STATE_PLAYING) || (pending == GST_STATE_PLAYING) )
+      {
+         LOCK( sink );
+         eosDetected= sink->eosDetected;
+         UNLOCK( sink );
+         if ( !eosDetected )
+         {
+            GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_eos_event: EOS during preroll to playing: completing preroll and posting EOS");
+            gst_westeros_sink_eos_detected( sink );
+         }
+         else
+         {
+            GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_eos_event: EOS already detected by SOC, skipping eos_detected call");
+         }
+      }
+   }
 }
 
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath )
