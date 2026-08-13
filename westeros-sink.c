@@ -2109,6 +2109,10 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             {
                passToDefault= TRUE;
             }
+            else
+            {
+               gst_westeros_sink_soc_eos_event( sink );
+            }
          }
          break;
          
