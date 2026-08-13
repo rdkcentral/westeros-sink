@@ -2715,13 +2715,13 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
    {
       GstState state, pending;
       gboolean eosDetected;
-      GST_OBJECT_LOCK(sink);
+      GST_BASE_SINK_PREROLL_LOCK(GST_BASE_SINK(sink));
       state= GST_STATE(sink);
       pending= GST_STATE_PENDING(sink);
-      GST_OBJECT_UNLOCK(sink);
+      GST_BASE_SINK_PREROLL_UNLOCK(GST_BASE_SINK(sink));
       if ( (state == GST_STATE_PLAYING) || (pending == GST_STATE_PLAYING) )
       {
-         LOCK( sink );
+         LOCK( sink );  
          eosDetected= sink->eosDetected;
          UNLOCK( sink );
          if ( !eosDetected )
