@@ -6792,7 +6792,7 @@ static bool wstProcessTextureWayland( GstWesterosSink *sink, int buffIndex )
                   wstSendFlushVideoClientConnection( sink->soc.conn );
                }
             }
-   Will       }
+         }
       }
       else
       {
