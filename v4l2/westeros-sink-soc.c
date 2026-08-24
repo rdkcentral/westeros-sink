@@ -254,6 +254,7 @@ static void wstLowLatencyModePushFrame(GstWesterosSink *sink, GstBuffer *buffer)
 static void wstLowLatencyModeSetVideoRect(GstWesterosSink *sink);
 static int getDisplayWidth();
 static gboolean wstSocEnsureReadyToPausedInitialized( GstWesterosSink *sink );
+static void wstCheckAndCompleteAsyncStateChangeToPaused( GstBaseSink *bs );
 
 #ifdef USE_AMLOGIC_MESON
 #include "meson_drm.h"
@@ -6791,7 +6792,7 @@ static bool wstProcessTextureWayland( GstWesterosSink *sink, int buffIndex )
                   wstSendFlushVideoClientConnection( sink->soc.conn );
                }
             }
-         }
+   Will       }
       }
       else
       {
