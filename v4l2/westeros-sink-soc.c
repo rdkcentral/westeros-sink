@@ -254,6 +254,7 @@ static void wstLowLatencyModePushFrame(GstWesterosSink *sink, GstBuffer *buffer)
 static void wstLowLatencyModeSetVideoRect(GstWesterosSink *sink);
 static int getDisplayWidth();
 static gboolean wstSocEnsureReadyToPausedInitialized( GstWesterosSink *sink );
+static void wstCheckAndCompleteAsyncStateChangeToPaused( GstBaseSink *bs );
 
 #ifdef USE_AMLOGIC_MESON
 #include "meson_drm.h"
@@ -708,6 +709,13 @@ static GstFlowReturn wstChain(GstPad *pad, GstObject *parent, GstBuffer *buf)
          GST_BASE_SINK_PREROLL_UNLOCK(GST_BASE_SINK(sink));
          if ( sink->soc.videoPaused && sink->soc.startedOutOfSegment && (sink->soc.frameOutCount == 0) )
          {
+            /* First in-segment input buffer: unblock the pending async state change to PAUSED now
+               instead of waiting for the first decoded output frame. */
+            if ( GST_CLOCK_TIME_IS_VALID(pts) && GST_CLOCK_TIME_IS_VALID(duration) &&
+                 (pts + duration > sink->segment.start) )
+            {
+               wstCheckAndCompleteAsyncStateChangeToPaused( GST_BASE_SINK(sink) );
+            }
             gst_buffer_unref( buf );
             return GST_FLOW_OK;
          }
@@ -2879,6 +2887,12 @@ static void wstSinkSocStopVideo( GstWesterosSink *sink )
    if ( sink->soc.videoOutputThread )
    {
       sink->soc.quitVideoOutputThread= TRUE;
+      /* STREAMOFF first so a blocking VIDIOC_DQBUF inside the thread is unblocked */
+      if ( sink->soc.v4l2Fd >= 0 )
+      {
+         int outType= sink->soc.fmtOut.type;
+         IOCTL( sink->soc.v4l2Fd, VIDIOC_STREAMOFF, &outType );
+      }
       g_thread_join( sink->soc.videoOutputThread );
       sink->soc.videoOutputThread= NULL;
    }
@@ -7621,6 +7635,9 @@ capture_start:
    }
 
 exit:
+
+   /* Ensure a pending async state change to PAUSED is not left blocked indefinitely */
+   wstCheckAndCompleteAsyncStateChangeToPaused( GST_BASE_SINK(sink) );
 
    LOCK(sink);
    wstSendFlushVideoClientConnection( sink->soc.conn );
