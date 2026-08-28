@@ -998,6 +998,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.frameOutCount= 0;
    sink->soc.videoDecodeStartTime= 0;
    sink->soc.frameDecodeCount= 0;
+   sink->soc.frameInCountAtDecodeStart= 0;
    sink->soc.frameDisplayCount= 0;
    sink->soc.expectNoLastFrame= FALSE;
    sink->soc.decoderLastFrame= 0;
@@ -2340,6 +2341,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       {
          wstLowLatencyModePushFrame(sink, buffer);
          ++sink->soc.frameInCount;
+          GST_DEBUG("AMLOGIC-7409: frameInCount before start video: %d", sink->soc.frameInCount);
          sink->soc.lastBuffer= buffer;
          LOCK(sink);
          if ( !sink->videoStarted && (!sink->rm || sink->resAssignedId >= 0) )
@@ -2534,6 +2536,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       }
 
       ++sink->soc.frameInCount;
+      GST_ERROR("7409--> frameInCount value before issue input VIDIOC_STREAMON:%d\n",sink->soc.frameInCount);
 
       if ( sink->soc.lastBuffer != buffer )
       {
@@ -2609,6 +2612,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.decoderLastFrame= 0;
    sink->soc.decoderEOS= 0;
    sink->soc.videoDecodeStartTime= 0;
+   sink->soc.frameInCountAtDecodeStart= 0;
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    sink->soc.startedOutOfSegment= FALSE;
@@ -7119,6 +7123,10 @@ capture_start:
          goto exit;
       }
 
+         /* Baseline the frameIn input counter for this decode epoch. */
+      sink->soc.frameInCountAtDecodeStart= sink->soc.frameInCount;
+      GST_ERROR("AML-7409: Received the frameInCount at Decoder start:%d\n",sink->soc.frameInCountAtDecodeStart);
+
       /* Renamed sink->soc.videoStartTime to sink->soc.videoDecodeStartTime and moved from gst_westeros_sink_soc_render to wstVideoOutputThread.
          Decode time measurement should be ideally started when output thread issue VIDIOC_STREAMON for V4L Capture */
       sink->soc.videoDecodeStartTime= g_get_monotonic_time();
@@ -7386,11 +7394,12 @@ capture_start:
                      break;
                   }
                }
-               if ( (sink->soc.frameDecodeCount == 0) && (sink->soc.frameInCount > 0) && !sink->soc.videoPaused && !sink->soc.decodeError )
+               if ( (sink->soc.frameDecodeCount == 0) && (sink->soc.frameInCount > sink->soc.frameInCountAtDecodeStart) && !sink->soc.videoPaused && !sink->soc.decodeError )
                {
                   gint64 now= g_get_monotonic_time();
                   float frameRate= (sink->soc.frameRate != 0.0 ? sink->soc.frameRate : 30.0);
-                  float frameDelay= sink->soc.frameInCount / frameRate;
+                  float frameDelay= (sink->soc.frameInCount - sink->soc.frameInCountAtDecodeStart)/ frameRate;
+				  GST_ERROR("7409--> frameInCount: %d, frameInCountAtDecodeStart:%d\n",sink->soc.frameInCount, sink->soc.frameInCountAtDecodeStart);
                   GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
