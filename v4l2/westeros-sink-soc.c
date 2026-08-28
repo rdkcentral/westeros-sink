@@ -7080,6 +7080,7 @@ capture_start:
    havePriEvent= false;
    if ( sink->soc.numBuffersOut )
    {
+	  GST_DEBUG("7468--> in if loop of capture_start \n");
       LOCK(sink);
       if ( (sink->soc.v4l2Fd == -1) || (sink->soc.outBuffers == 0) || sink->soc.quitVideoOutputThread )
       {
@@ -7303,6 +7304,7 @@ capture_start:
 
             if ( pfd.revents & (POLLIN|POLLRDNORM) )
             {
+			   GST_DEBUG("7468--> goto capture_Ready is going to be called \n");
                goto capture_ready;
             }
          }
@@ -7385,6 +7387,8 @@ capture_start:
                if ( (!sink->soc.numBuffersOut || (sink->soc.decoderLastFrame || sink->soc.expectNoLastFrame)) &&
                     (havePriEvent || (pfd.revents & POLLPRI)) )
                {
+				  GST_DEBUG("7468--> process events going to be called\n");
+
                   pfd.revents &= ~POLLPRI;
                   havePriEvent= false;
                   wstProcessEvents( sink );
