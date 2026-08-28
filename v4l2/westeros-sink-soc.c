@@ -7272,7 +7272,7 @@ capture_start:
          if ( sink->soc.hasEvents )
          {
             struct pollfd pfd;
-
+		GST_DEBUG("check\n");
             pfd.fd= sink->soc.v4l2Fd;
             pfd.events= POLLIN | POLLRDNORM | POLLPRI;
             pfd.revents= 0;
