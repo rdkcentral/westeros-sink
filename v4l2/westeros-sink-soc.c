@@ -2963,11 +2963,13 @@ static void wstSinkSocStopVideo( GstWesterosSink *sink )
    {
       free( sink->soc.inputFormats );
       sink->soc.inputFormats= 0;
+      sink->soc.numInputFormats= 0;
    }
    if ( sink->soc.outputFormats )
    {
       free( sink->soc.outputFormats );
       sink->soc.outputFormats= 0;
+      sink->soc.numOutputFormats= 0;
    }
    if ( sink->soc.codecData )
    {
