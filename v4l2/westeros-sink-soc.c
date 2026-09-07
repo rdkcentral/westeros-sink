@@ -2611,6 +2611,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.videoDecodeStartTime= 0;
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
+   sink->soc.emitFirstFrameSignal= FALSE;
    sink->soc.startedOutOfSegment= FALSE;
    wstFlushPixelAspectRatio( sink, false );
    #ifdef USE_GST_AFD
@@ -5679,6 +5680,11 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                            FRAME( "out:       status received: frameTime %lld numDropped %d", frameTime, sink->soc.numDropped);
                            if ( frameTime != -1LL )
                            {
+                              if ( sink->flushStarted || sink->needSegment )
+                              {
+                                 GST_DEBUG("Ignore frameTime while waiting for the post-flush segment");
+                                 break;
+                              }
                               gint64 currentNano= frameTime*1000LL;
 
                               /*
@@ -5689,21 +5695,8 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                                */
                               if ( frameTime < sink->segment.start/1000LL )
                               {
-                                 /* 
-                                  * Frame time is stale. Do not use this to calculate position. Any new segment will have already initialized the position value
-                                  * to segment start anyway. Skip time code handling as well, as it's directly linked to the PTS. 
-                                  * Continue to update frameDisplayCount and first frame signal as usual
-                                  */
                                  GST_DEBUG("Stale frameTime: %lld μs before segment start: %lld μs. Skip position update.", frameTime, sink->segment.start/1000LL);
-                                 if (sink->soc.frameOutCount > 0 ) // Note: same pattern of condition checks as the happy-path a few code blocks below.
-                                 {
-                                    if (sink->soc.frameDisplayCount == 0)
-                                    {
-                                       sink->soc.emitFirstFrameSignal= TRUE;
-                                    }
-                                    ++sink->soc.frameDisplayCount;
-                                 }
-                                 break;  /* Early exit - no position calculation for stale frameTime.  */
+                                 break;
                               }
 
                               /* Position calculation for valid (non-stale) frameTime only */
@@ -6199,6 +6192,13 @@ static bool wstLocalRateControl( GstWesterosSink *sink, int buffIndex )
 
    if ( !sink->soc.outBuffers )
    {
+      goto exit;
+   }
+
+   if ( sink->flushStarted || sink->needSegment )
+   {
+      FRAME("out:       drop frame while waiting for the post-flush segment");
+      drop= true;
       goto exit;
    }
 
