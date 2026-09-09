@@ -2,6 +2,12 @@
 
 All notable changes to westeros-sink are documented in this file.
 
+## [2.1.3] - 2026-09-01
+**Tag:** 2.1.3
+
+### Changed
+- westeros defect fix, part2
+
 ## [2.1.2] - 2026-07-13
 **Tag:** 2.1.2
 
