@@ -19,7 +19,6 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
-
 #include <string.h>
 #include <stdio.h>
 #include <sys/file.h>
@@ -3472,12 +3471,17 @@ static void wstBuildSinkCaps( GstWesterosSinkClass *klass )
    }
 }
 
+extern int WstGLConsoleCommand( char *cmd, char **rsp );
 #define DEFAULT_DRM_NAME "/dev/dri/card0"
 
 static bool drmInit( GstWesterosSink *sink )
 {
    bool result= false;
    const char *drmName;
+   int rc;
+   struct drm_auth auth;
+   char drmAuthCmd[64];
+   char *drmAuthRsp= NULL;
 
    drmName= getenv("WESTEROS_SINK_DRM_NAME");
    if ( !drmName )
@@ -3492,7 +3496,37 @@ static bool drmInit( GstWesterosSink *sink )
       GST_ERROR("Failed to open drm node (%s): %d", drmName, errno);
       goto exit;
    }
-
+    memset( &auth, 0, sizeof(auth) );
+    rc= ioctl( sink->soc.drmFd, DRM_IOCTL_GET_MAGIC, &auth );
+   if ( rc == 0 )
+    {
+       /* card0 node - send magic to compositor for authentication */
+       snprintf( drmAuthCmd, sizeof(drmAuthCmd),
+                 "drmauth %u", (unsigned int)auth.magic );
+       GST_DEBUG("drmInit: sending magic %u to compositor via "
+                 "XDG_RUNTIME_DIR/display", (unsigned int)auth.magic);
+       rc= WstGLConsoleCommand( drmAuthCmd, &drmAuthRsp );
+       if ( rc != 0 )
+       {
+          GST_WARNING("drmInit: DRM auth failed rc=%d "
+                      "verify XDG_RUNTIME_DIR and compositor running", rc);
+       }
+       else
+       {
+          GST_DEBUG("drmInit: DRM auth success magic %u rsp=[%s]",
+                    (unsigned int)auth.magic,
+                    drmAuthRsp ? drmAuthRsp : "(null)");
+       }
+       if ( drmAuthRsp )
+       {
+          free( drmAuthRsp );
+          drmAuthRsp= NULL;
+       }
+   }
+   else
+   {
+      GST_ERROR("drmInit: DRM_IOCTL_GET_MAGIC failed: rc %d errno %d", rc, errno);
+   }
    result= true;
 
 exit:
