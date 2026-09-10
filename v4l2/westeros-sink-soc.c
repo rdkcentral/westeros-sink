@@ -2697,6 +2697,12 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
    GST_DEBUG("hasEOSEvents %d frameInCount %d", sink->soc.hasEOSEvents, sink->soc.frameInCount);
    if ( !sink->soc.hasEOSEvents || (sink->soc.frameInCount <= 2) )
    {
+      if ( sink->soc.frameInCount == 0 )
+      {
+         GST_DEBUG("no frames decoded: send EOS immediately");
+         gst_westeros_sink_eos_detected( sink );
+         return;
+      }
       GST_DEBUG("set decoderEOS");
       sink->soc.decoderEOS= 1;
    }
@@ -2713,6 +2719,30 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
       if ( rc )
       {
          GST_DEBUG("VIDIOC_DECODER_CMD V4L2_DEC_CMD_STOP rc %d errno %d",rc, errno);
+      }
+   }
+   else
+   {
+      GstState state, pending;
+      gboolean eosDetected;
+      GST_BASE_SINK_PREROLL_LOCK(GST_BASE_SINK(sink));
+      state= GST_STATE(sink);
+      pending= GST_STATE_PENDING(sink);
+      GST_BASE_SINK_PREROLL_UNLOCK(GST_BASE_SINK(sink));
+      if ( (state == GST_STATE_PLAYING) || (pending == GST_STATE_PLAYING) )
+      {
+         LOCK( sink );  
+         eosDetected= sink->eosDetected;
+         UNLOCK( sink );
+         if ( !eosDetected )
+         {
+            GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_eos_event: EOS during preroll to playing: completing preroll and posting EOS");
+            gst_westeros_sink_eos_detected( sink );
+         }
+         else
+         {
+            GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_eos_event: EOS already detected by SOC, skipping eos_detected call");
+         }
       }
    }
 }
