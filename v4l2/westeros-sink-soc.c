@@ -2597,7 +2597,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 
    if ( sink->videoStarted )
    {
-      wstDecoderReset( sink, true );
+      wstDecoderReset( sink, false );
    }
    LOCK(sink);
    sink->soc.frameInCount= 0;
