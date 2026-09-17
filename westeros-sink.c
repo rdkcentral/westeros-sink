@@ -2105,31 +2105,11 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             gboolean eosDetected= sink->eosDetected;
             sink->eosEventSeen= TRUE;
             UNLOCK( sink );
-            if ( eosDetected )
+            if ( !eosDetected )
             {
-               passToDefault= TRUE;
-            }
-            else
-            {
-               GstState state= GST_STATE(sink);
-               GstState pending= GST_STATE_PENDING(sink);
                gst_westeros_sink_soc_eos_event( sink );
-               if ( (state == GST_STATE_PLAYING) || (pending == GST_STATE_PLAYING) )
-               {
-                  LOCK( sink );
-                  eosDetected= sink->eosDetected;
-                  UNLOCK( sink );
-                  if ( !eosDetected )
-                  {
-                     GST_DEBUG_OBJECT(sink, "gst_westeros_sink_event: EOS during preroll to playing: completing preroll and posting EOS");
-                     gst_westeros_sink_eos_detected( sink );
-                  }
-               }
-               else
-               {
-                  passToDefault= TRUE;
-               }
             }
+	        passToDefault= TRUE;
          }
          break;
          
