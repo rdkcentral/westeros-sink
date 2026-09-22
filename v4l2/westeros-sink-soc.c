@@ -127,15 +127,6 @@ enum
 };
 enum
 {
-   SIGNAL_FIRSTFRAME,
-   SIGNAL_UNDERFLOW,
-   SIGNAL_NEWTEXTURE,
-   SIGNAL_DECODEERROR,
-   SIGNAL_TIMECODE,
-   MAX_SIGNAL
-};
-enum
-{
    ZOOM_NONE,
    ZOOM_DIRECT,
    ZOOM_NORMAL,
@@ -166,7 +157,7 @@ struct vcodec
 
 static bool g_frameDebug= false;
 static const char *gDeviceName= DEFAULT_DEVICE_NAME;
-static guint g_signals[MAX_SIGNAL]= {0};
+guint g_signals[MAX_SIGNAL]= {0};
 
 static gboolean (*queryOrg)(GstElement *element, GstQuery *query)= 0;
 
