@@ -2597,7 +2597,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 
    if ( sink->videoStarted )
    {
-      wstDecoderReset( sink, true );
+      wstDecoderReset( sink, false );
    }
    LOCK(sink);
    sink->soc.frameInCount= 0;
@@ -5688,15 +5688,25 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                                * During seek operations, old frameTime messages can arrive after
                                * the segment boundary has been updated, causing position corruption.
                                * Filter out frameTime values that predate the current segment start.
+                               * Also filter out frameTime values that arrive before firstPTS has
+                               * been re-synced to the active positionSegmentStart: positionSegmentStart
+                               * is updated synchronously on the SEGMENT event, but firstPTS is only
+                               * updated later, once the decoder input for the new segment is seen in
+                               * gst_westeros_sink_soc_render(). Status messages from frames still
+                               * draining from the previous segment can land in this window - with
+                               * repeated/rapid seeks (eg. backward seeks) this window can be re-opened
+                               * continuously, and combining the new positionSegmentStart with the stale
+                               * firstPTS produces a bogus position that looks stuck on the prior seek.
                                */
-                              if ( frameTime < sink->segment.start/1000LL )
+                              if ( (frameTime < sink->segment.start/1000LL) ||
+                                   (sink->prevPositionSegmentStart != sink->positionSegmentStart) )
                               {
                                  /* 
                                   * Frame time is stale. Do not use this to calculate position. Any new segment will have already initialized the position value
                                   * to segment start anyway. Skip time code handling as well, as it's directly linked to the PTS. 
                                   * Continue to update frameDisplayCount and first frame signal as usual
                                   */
-                                 GST_DEBUG("Stale frameTime: %lld μs before segment start: %lld μs. Skip position update.", frameTime, sink->segment.start/1000LL);
+                                 GST_DEBUG("Stale frameTime: %lld μs before segment start: %lld μs or firstPTS not yet synced (prevPositionSegmentStart %lld positionSegmentStart %lld). Skip position update.", frameTime, sink->segment.start/1000LL, sink->prevPositionSegmentStart, sink->positionSegmentStart);
                                  if (sink->soc.frameOutCount > 0 ) // Note: same pattern of condition checks as the happy-path a few code blocks below.
                                  {
                                     if (sink->soc.frameDisplayCount == 0)
@@ -7493,13 +7503,20 @@ capture_start:
             if ( !sink->soc.conn )
             {
                /* If we are not connected to a video server, set position here */
-               gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
-               sink->position= sink->positionSegmentStart + frameTime - firstNano;
-               sink->currentPTS = nanoTimeToPTS(frameTime);
-
-               if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
+               /* Same stale-frameTime guard as the video-server 'S' status path: skip position
+                  update if this frame predates the segment, or firstPTS has not yet been
+                  resynced to positionSegmentStart for the current segment (repeated/rapid seeks). */
+               if ( (frameTime >= sink->segment.start) &&
+                    (sink->prevPositionSegmentStart == sink->positionSegmentStart) )
                {
-                  sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
+                  gint64 firstNano= ((sink->firstPTS/90LL)*GST_MSECOND)+((sink->firstPTS%90LL)*GST_MSECOND/90LL);
+                  sink->position= sink->positionSegmentStart + frameTime - firstNano;
+                  sink->currentPTS = nanoTimeToPTS(frameTime);
+
+                  if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
+                  {
+                     sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
+                  }
                }
             }
 
