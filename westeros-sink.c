@@ -765,7 +765,7 @@ static void captureInit( GstWesterosSink *sink )
    if ( env )
    {
       GST_DEBUG_OBJECT(sink, "WESTEROSSINK_ENABLE_CAPTURE=(%s)",env);
-      void *module= dlopen( "libmediacapture.so.0.0.0", RTLD_NOW );
+      void *module= dlopen( "/usr/lib/gstreamer-1.0/libmediacapture.so.0.0.0", RTLD_NOW );
       if ( module )
       {
          MediaCaptureCreateContext captureCreateContext= (MediaCaptureCreateContext)dlsym( module, "MediaCaptureCreateContext" );
@@ -2270,7 +2270,7 @@ static gboolean gst_westeros_sink_check_caps(GstWesterosSink *sink, GstPad *peer
    caps= gst_pad_get_caps(peer);
 #endif
   
-   if (gst_caps_get_size(caps) == 0)
+   if ( !caps || (gst_caps_get_size(caps) == 0) )
    {
       result= TRUE;
       goto exit;

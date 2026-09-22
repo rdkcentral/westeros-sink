@@ -42,7 +42,7 @@ endif
 
 plugin_LTLIBRARIES = libgstwesterossink.la
 
-libgstwesterossink_la_SOURCES = westeros-sink.c westeros-sink-soc.c
+libgstwesterossink_la_SOURCES = westeros-sink.c westeros-sink-soc.c westeros-sink-raw.c
 
 if HAVE_PIPELINE_LOGGING
 AM_CFLAGS += -DUSE_PIPELINE_LOGGING
