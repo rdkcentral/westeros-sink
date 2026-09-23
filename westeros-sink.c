@@ -2194,12 +2194,24 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                sink->position= GST_TIME_AS_NSECONDS(segmentStart);
                sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentStart);
                sink->startPTS= (GST_TIME_AS_MSECONDS(segmentStart)*90LL);
+
+               /*
+                * Re-sync the first-PTS baseline immediately with the new segment. This
+                * avoids a race where late status messages from the previous segment still
+                * arrive after the segment boundary has changed but before firstPTS is
+                * updated from the first buffer of the new segment.
+                */
+               sink->firstPTS= sink->startPTS;
+               sink->prevPositionSegmentStart= sink->positionSegmentStart;
+
                if ( sink->useSegmentPosition &&
                     (segmentStart != segmentPosition) &&
                     (segmentPosition != -1LL) )
                {
                   sink->position= GST_TIME_AS_NSECONDS(segmentPosition);
                   sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentPosition);
+                  sink->firstPTS= sink->startPTS;
+                  sink->prevPositionSegmentStart= sink->positionSegmentStart;
                }
                gst_westeros_sink_soc_set_startPTS( sink, sink->startPTS );
             }
