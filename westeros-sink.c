@@ -91,6 +91,7 @@ static void resMgrTerm( GstWesterosSink *sink );
 static void resMgrNotify( EssRMgr *rm, int event, int type, int id, void* userData );
 static void resMgrRequestDecoder( GstWesterosSink *sink );
 static void resMgrReleaseDecoder( GstWesterosSink *sink );
+static gboolean resMgrCompleteReadyToPaused( GstWesterosSink *sink, gboolean *passToDefault );
 static void gst_westeros_sink_term(GstWesterosSink *sink); 
 static void gst_westeros_sink_finalize(GObject *object); 
 static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
@@ -520,6 +521,12 @@ static void resMgrNotify( EssRMgr *rm, int event, int type, int id, void* userDa
                        sink->resCurrCaps.capabilities,
                        sink->resCurrCaps.info.video.maxWidth,
                        sink->resCurrCaps.info.video.maxHeight  );
+	       /* grant completed asynchronously: finish the ready_to_paused work deferred when the request was made */
+               sink->acquireResources( sink );
+               {
+                  gboolean passToDefault= FALSE;
+                  resMgrCompleteReadyToPaused( sink, &passToDefault );
+               }
                break;
             case EssRMgrEvent_revoked:
                {
@@ -572,14 +579,14 @@ static void resMgrRequestDecoder( GstWesterosSink *sink )
       {
          if ( sink->resReqPrimary.resReq.assignedId >= 0 )
          {
-            GST_DEBUG("sink %p assigned id %d caps %X", sink, sink->resReqPrimary.resReq.assignedId, sink->resReqPrimary.resReq.assignedCaps );
+            g_print("sink %p assigned id %d caps %X", sink, sink->resReqPrimary.resReq.assignedId, sink->resReqPrimary.resReq.assignedCaps );
             sink->resAssignedId= sink->resReqPrimary.resReq.assignedId;
             memset( &sink->resCurrCaps, 0, sizeof(EssRMgrCaps) );
             if ( !EssRMgrResourceGetCaps( sink->rm, EssRMgrResType_videoDecoder, sink->resAssignedId, &sink->resCurrCaps ) )
             {
-               GST_ERROR("gst_westeros_sink: resMgrRequestDecoder: failed to get caps of assigned decoder");
+               g_print("gst_westeros_sink: resMgrRequestDecoder: failed to get caps of assigned decoder");
             }
-            GST_DEBUG("sink %p assigned id %d caps %X (%dx%d)",
+            g_print("sink %p assigned id %d caps %X (%dx%d)",
                       sink,
                       sink->resAssignedId,
                       sink->resCurrCaps.capabilities,
@@ -588,7 +595,7 @@ static void resMgrRequestDecoder( GstWesterosSink *sink )
          }
          else
          {
-            GST_DEBUG("async grant pending" );
+            g_print("async grant pending" );
          }
       }
       else
@@ -604,6 +611,7 @@ static void resMgrReleaseDecoder( GstWesterosSink *sink )
    {
       if ( sink->resAssignedId >= 0 )
       {
+	 g_print("Swati resMgrReleaseDecoder id: %d",  sink->resAssignedId);
          EssRMgrReleaseResource( sink->rm, EssRMgrResType_videoDecoder, sink->resAssignedId );
          sink->resReqPrimary.resReq.assignedId= -1;
          sink->resAssignedId= -1;
@@ -617,13 +625,36 @@ static void resMgrUpdateState( GstWesterosSink *sink, int state )
    {
       if ( sink->resAssignedId >= 0 )
       {
+	      g_print("Swati resMgrUpdateState id: %d state: %d", sink->resAssignedId, state);
          EssRMgrResourceSetState( sink->rm, EssRMgrResType_videoDecoder, sink->resAssignedId, state );
       }
    }
 }
 
+static gboolean resMgrCompleteReadyToPaused( GstWesterosSink *sink, gboolean *passToDefault )
+{
+   gboolean result;
+   #ifdef ENABLE_SW_DECODE
+   if ( sink->rm && (sink->resCurrCaps.capabilities & EssRMgrVidCap_software) )
+   {
+      result= wstsw_ready_to_paused( sink, passToDefault );
+   }
+   else
+   #endif
+   {
+	   g_print("Swati gst_westeros_sink_soc_ready_to_paused ..");
+      result= gst_westeros_sink_soc_ready_to_paused( sink, passToDefault );
+   }
+   if ( result && sink->rm && sink->resAssignedId >= 0 )
+   {
+      resMgrUpdateState( sink, EssRMgrRes_paused );
+   }
+   return result;
+}
+
 static gboolean gst_westeros_sink_backend_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
+	g_print("Swati gst_westeros_sink_backend_null_to_ready");
    gboolean result;
    if ( sink->rm && (sink->resAssignedId < 0) )
    {
@@ -644,6 +675,7 @@ static gboolean gst_westeros_sink_backend_null_to_ready( GstWesterosSink *sink, 
 
 static gboolean gst_westeros_sink_backend_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+	g_print("Swati gst_westeros_sink_backend_ready_to_paused");
    gboolean result;
    if ( sink->rm && (sink->resAssignedId < 0) )
    {
@@ -655,31 +687,25 @@ static gboolean gst_westeros_sink_backend_ready_to_paused( GstWesterosSink *sink
    }
    if ( sink->rm && (sink->resAssignedId < 0) )
    {
+	   g_print("Swati gst_westeros_sink_backend_ready_to_paused sink->resAssignedId < 0 TRUE ?? )");
       result= TRUE;
    }
-   #ifdef ENABLE_SW_DECODE
-   else if ( sink->rm && (sink->resCurrCaps.capabilities & EssRMgrVidCap_software) )
-   {
-      result= wstsw_ready_to_paused( sink, passToDefault );
-   }
-   #endif
    else
    {
-      result= gst_westeros_sink_soc_ready_to_paused( sink, passToDefault );
-   }
-   if ( result && sink->rm && sink->resAssignedId >= 0 )
-   {
-      resMgrUpdateState( sink, EssRMgrRes_paused );
+      result= resMgrCompleteReadyToPaused( sink, passToDefault );
    }
    return result;
 }
 
 static gboolean gst_westeros_sink_backend_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
 {
+	g_print("Swati gst_westeros_sink_backend_paused_to_playing");
    gboolean result;
    if ( sink->rm && (sink->resAssignedId < 0) )
    {
+	   g_print("Swati gst_westeros_sink_backend_paused_to_playing sink->resAssignedId < 0 TRUE");
       result= TRUE;
+
    }
    #ifdef ENABLE_SW_DECODE
    else if ( sink->rm && (sink->resCurrCaps.capabilities & EssRMgrVidCap_software) )
@@ -2344,7 +2370,8 @@ static void gst_westeros_sink_unlink(GstPad *pad)
 }
 
 static GstFlowReturn gst_westeros_sink_render(GstBaseSink *base_sink, GstBuffer *buffer)
-{  
+{
+      g_print("Swati gst_westeros_sink_render ++");	
    GstWesterosSink *sink= GST_WESTEROS_SINK(base_sink);
    
    LOCK( sink );

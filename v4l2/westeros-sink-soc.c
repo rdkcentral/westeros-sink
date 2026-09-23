@@ -894,6 +894,7 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
       if ( env && (atoi(env) != 0) )
       {
          klass->canUseResMgr= 1;
+	 GST_INFO("Swati gst_westeros_sink_soc_class_init canUseResMgr = %d", klass->canUseResMgr);
       }
    }
 }
@@ -1185,6 +1186,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
       g_vcodec = vcodecInit();
 
    result= TRUE;
+   GST_INFO("gst_westeros_sink_soc_init");
 
    return result;
 }
@@ -1208,6 +1210,7 @@ void gst_westeros_sink_soc_term( GstWesterosSink *sink )
    #endif
 
    pthread_mutex_destroy(&sink->soc.reset_lock);
+   GST_INFO(" gst_westeros_sink_soc_term");
 }
 
 void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -1546,6 +1549,7 @@ void gst_westeros_sink_soc_registryHandleGlobalRemove( GstWesterosSink *sink,
 gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
    gboolean result= FALSE;
+   GST_INFO("gst_westeros_sink_soc_null_to_ready");
 
    WESTEROS_UNUSED(passToDefault);
 
@@ -1565,6 +1569,7 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
    gboolean result= FALSE;
 
    WESTEROS_UNUSED(passToDefault);
+   g_print("gst_westeros_sink_soc_ready_to_paused");
 
    if ( sinkAcquireResources( sink ) )
    {
@@ -1575,7 +1580,7 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
          sink->soc.conn= wstCreateVideoClientConnection( sink, DEFAULT_VIDEO_SERVER );
          if ( !sink->soc.conn )
          {
-            GST_ERROR("unable to connect to video server (%s)", DEFAULT_VIDEO_SERVER );
+            g_print("unable to connect to video server (%s)", DEFAULT_VIDEO_SERVER );
             sink->soc.useCaptureOnly= TRUE;
             sink->soc.captureEnabled= TRUE;
             printf("westeros-sink: no video server - capture only\n");
@@ -1588,6 +1593,7 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
       }
 
       LOCK(sink);
+      g_print("Swati sink_soc_ready_to_paused acquired resources");
       sink->startAfterCaps= TRUE;
       sink->soc.videoPlaying= TRUE;
       sink->soc.videoPaused= TRUE;
@@ -1600,13 +1606,14 @@ gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean 
    {
       GST_ERROR("gst_westeros_sink_ready_to_paused: sinkAcquireResources failed");
    }
-
+   g_print("Swati gst_westeros_sink_ready_to_paused: startAfterCaps : %d vidPlaying : %d vidPaused : %d vidServerPaused : %d", sink->startAfterCaps, sink->soc.videoPlaying, sink->soc.videoPaused, sink->soc.videoServerPaused);
    return result;
 }
 
 gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault )
 {
    WESTEROS_UNUSED(passToDefault);
+   g_print("Swati sink_soc_paused_to_playiny");
 
    LOCK( sink );
    sink->soc.videoPlaying= TRUE;
@@ -1618,6 +1625,7 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
       sink->soc.updateSession= TRUE;
    }
    UNLOCK( sink );
+   g_print("Swati sink_soc_paused_to_playing vidPlaying : %d vidPaused : %d updateSess : %d", sink->soc.videoPlaying, sink->soc.videoPaused, sink->soc.updateSession);
 
    return TRUE;
 }
@@ -2112,6 +2120,7 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 
 void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 {
+	g_print("gst_westeros_sink_soc_render ++");
    #ifdef ENABLE_SW_DECODE
    if ( swIsSWDecode( sink ) )
    {
@@ -2153,6 +2162,11 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 
       mem= gst_buffer_peek_memory( buffer, 0 );
       #endif
+
+      if ( sink->soc.frameInCount == 0 )
+      {
+         GST_INFO("first input buffer: fd %d formatsSet %d videoStarted %d", sink->soc.v4l2Fd, sink->soc.formatsSet, sink->videoStarted);
+      }
 
       if ( !sink->soc.formatsSet )
       {
@@ -2439,6 +2453,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
          int len;
 
          GST_DEBUG("gst_westeros_sink_soc_render: issue input VIDIOC_STREAMON");
+	 g_print("render starting decoder: fd %d inputQueued %d resourceId %d", sink->soc.v4l2Fd, sink->soc.inQueuedCount, sink->resAssignedId);
          rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_STREAMON, &sink->soc.fmtIn.type );
          if ( rc < 0 )
          {
@@ -2509,6 +2524,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 
 gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
 {
+   g_print("Swati gst_westeros_sink_soc_start_video");
    gboolean result= FALSE;
    int rc;
 
@@ -2520,7 +2536,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    sink->soc.decoderLastFrame= 0;
    sink->soc.decoderEOS= 0;
 
-   GST_DEBUG("start_video: issue input VIDIOC_STREAMON");
+   g_print("start_video: issue input VIDIOC_STREAMON");
    rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_STREAMON, &sink->soc.fmtIn.type );
    if ( rc < 0 )
    {
@@ -2735,6 +2751,7 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
 
 static void wstSinkSocStopVideo( GstWesterosSink *sink )
 {
+   g_print("Swati wstSinkSocStopVideo ++");
    if ( sink->soc.videoOutputThread )
    {
       sink->soc.quitVideoOutputThread= TRUE;
@@ -3122,6 +3139,7 @@ static void wstStartEvents( GstWesterosSink *sink )
    if ( rc == 0 )
    {
       sink->soc.hasEvents= TRUE;
+      g_print("wstStartEvents: V4L2_EVENT_SOURCE_CHANGE");
    }
    else
    {
@@ -3134,6 +3152,7 @@ static void wstStartEvents( GstWesterosSink *sink )
    if ( rc == 0 )
    {
       sink->soc.hasEOSEvents= TRUE;
+      g_print("wstStartEvents: VIDIOC_SUBSCRIBE_EVENT");
    }
    else
    {
@@ -3188,11 +3207,11 @@ static void wstProcessEvents( GstWesterosSink *sink )
             {
                if ( !sink->soc.interlaced )
                {
-                  GST_DEBUG("v4l2 driver indicates content is interlaced, but caps did not : using interlaced");
+                  g_print("v4l2 driver indicates content is interlaced, but caps did not : using interlaced");
                }
                sink->soc.interlaced= TRUE;
             }
-            GST_DEBUG("source is interlaced: %d", sink->soc.interlaced);
+            g_print("source is interlaced: %d", sink->soc.interlaced);
 
             memset( &fmtOut, 0, sizeof(fmtOut));
             bufferType= (sink->soc.isMultiPlane ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_CAPTURE);
@@ -4509,6 +4528,7 @@ static void wstSendResourceVideoClientConnection( WstVideoClientConnection *conn
 {
    if ( conn )
    {
+	   g_print("wstSendResourceVideoClientConnection");
       GstWesterosSink *sink= conn->sink;
       struct msghdr msg;
       struct iovec iov[1];
@@ -6890,7 +6910,7 @@ static gpointer wstVideoOutputThread(gpointer data)
    bool wasPaused= false;
    bool havePriEvent;
 
-   GST_DEBUG("wstVideoOutputThread: enter");
+   g_print("wstVideoOutputThread: enter");
 
    LOCK(sink);
    wasPaused= sink->soc.videoServerPaused;
@@ -6932,7 +6952,7 @@ capture_start:
          sink->soc.outBuffers[i].queued= true;
       }
 
-      GST_DEBUG("output thread: issue input VIDIOC_STREAMON");
+      g_print("output thread: issue input VIDIOC_STREAMON");
       rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_STREAMON, &sink->soc.fmtOut.type );
       if ( rc < 0 )
       {
@@ -6946,6 +6966,8 @@ capture_start:
          Decode time measurement should be ideally started when output thread issue VIDIOC_STREAMON for V4L Capture */
       sink->soc.videoDecodeStartTime= g_get_monotonic_time();
       sink->soc.decoderLastFrame= 0;
+
+      GST_INFO("output STREAMON complete: fd %d outputQueued %d", sink->soc.v4l2Fd, sink->soc.outQueuedCount);
 
       bufferType= sink->soc.isMultiPlane ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE :V4L2_BUF_TYPE_VIDEO_CAPTURE;
       memset( &selection, 0, sizeof(selection) );
@@ -7026,22 +7048,24 @@ capture_start:
       if ( sink->soc.emitFirstFrameSignal )
       {
          sink->soc.emitFirstFrameSignal= FALSE;
-         GST_DEBUG("wstVideoOutputThread: emit first frame signal");
+        g_print("wstVideoOutputThread: emit first frame signal");
          g_signal_emit (G_OBJECT (sink), g_signals[SIGNAL_FIRSTFRAME], 0, 2, NULL);
       }
       if ( sink->soc.emitUnderflowSignal )
       {
          sink->soc.emitUnderflowSignal= FALSE;
-         GST_DEBUG("wstVideoOutputThread: emit underflow signal");
+         g_print("wstVideoOutputThread: emit underflow signal");
          g_signal_emit (G_OBJECT (sink), g_signals[SIGNAL_UNDERFLOW], 0, 0, NULL);
       }
       if ( sink->soc.quitVideoOutputThread )
       {
+	      g_print("wstVideoOutputThread: quitVideoOutputThread");
          break;
       }
       else if ( sink->soc.videoPaused && !sink->soc.frameAdvance )
       {
          LOCK(sink);
+	 g_print("wstVideoOutputThread: videoPaused");
          wstProcessMessagesVideoClientConnection( sink->soc.conn );
          if ( !wasPaused )
          {
@@ -7570,7 +7594,7 @@ static gpointer wstDispatchThread(gpointer data)
    GstWesterosSink *sink= (GstWesterosSink*)data;
    if ( sink->display )
    {
-      GST_DEBUG("dispatchThread: enter");
+      g_print("dispatchThread: enter");
       while( !sink->soc.quitDispatchThread )
       {
          if ( wl_display_dispatch_queue( sink->display, sink->queue ) == -1 )
@@ -7612,6 +7636,7 @@ static void postErrorMessage( GstWesterosSink *sink, int errorCode, const char *
 static GstFlowReturn prerollSinkSoc(GstBaseSink *base_sink, GstBuffer *buffer)
 {
    GstWesterosSink *sink= GST_WESTEROS_SINK(base_sink);
+   g_print("Swati prerollSinkSoc ++");
 
    if ( swIsSWDecode( sink ) )
    {
@@ -7627,6 +7652,7 @@ static GstFlowReturn prerollSinkSoc(GstBaseSink *base_sink, GstBuffer *buffer)
    {
       if ( sink->soc.prerollBuffer != buffer )
       {
+	 g_print("Swati prerollSinkSoc: gst_westeros_sink_soc_render");
          gst_westeros_sink_soc_render( sink, buffer );
          sink->soc.prerollBuffer= buffer;
       }
@@ -7654,7 +7680,7 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
    struct v4l2_exportbuffer eb;
 
    LOCK(sink);
-   GST_DEBUG("sinkAcquireVideo: enter");
+   g_print("sinkAcquireVideo: enter");
    if ( sink->rm && sink->resAssignedId >= 0 )
    {
       if ( swIsSWDecode( sink ) )
@@ -7671,6 +7697,8 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       GST_ERROR("failed to open device (%s)", sink->soc.devname );
       goto exit;
    }
+
+   g_print("acquired V4L2 device %s fd %d resourceId %d", sink->soc.devname, sink->soc.v4l2Fd, sink->resAssignedId);
 
    rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_QUERYCAP, &sink->soc.caps );
    if ( rc < 0 )
@@ -7698,7 +7726,7 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
 
    if ( (sink->soc.deviceCaps & V4L2_CAP_VIDEO_M2M_MPLANE) && !(sink->soc.deviceCaps & V4L2_CAP_VIDEO_M2M) )
    {
-      GST_DEBUG("device is multiplane");
+      GST_INFO("device is multiplane");
       sink->soc.isMultiPlane= TRUE;
    }
 
@@ -7730,9 +7758,10 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
    result= 1;
 
 exit:
-   GST_DEBUG("sinkAcquireVideo: exit: %d", result);
+   GST_INFO("sinkAcquireVideo: exit: %d", result);
    UNLOCK(sink);
 
+   g_print("Swati sinkAcquireVideo: result %d", result);
    return result;
 }
 
@@ -7742,7 +7771,7 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
 
    wstSinkSocStopVideo( sink );
 
-   GST_DEBUG("sinkReleaseVideo: exit");
+   GST_INFO("sinkReleaseVideo: exit");
 }
 
 static bool swIsSWDecode( GstWesterosSink *sink )
