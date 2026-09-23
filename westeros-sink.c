@@ -91,6 +91,7 @@ static void resMgrTerm( GstWesterosSink *sink );
 static void resMgrNotify( EssRMgr *rm, int event, int type, int id, void* userData );
 static void resMgrRequestDecoder( GstWesterosSink *sink );
 static void resMgrReleaseDecoder( GstWesterosSink *sink );
+static gboolean resMgrCompleteReadyToPaused( GstWesterosSink *sink, gboolean *passToDefault );
 static void gst_westeros_sink_term(GstWesterosSink *sink); 
 static void gst_westeros_sink_finalize(GObject *object); 
 static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
@@ -520,6 +521,12 @@ static void resMgrNotify( EssRMgr *rm, int event, int type, int id, void* userDa
                        sink->resCurrCaps.capabilities,
                        sink->resCurrCaps.info.video.maxWidth,
                        sink->resCurrCaps.info.video.maxHeight  );
+	       /* grant completed asynchronously: finish the ready_to_paused work deferred when the request was made */
+               sink->acquireResources( sink );
+               {
+                  gboolean passToDefault= FALSE;
+                  resMgrCompleteReadyToPaused( sink, &passToDefault );
+               }
                break;
             case EssRMgrEvent_revoked:
                {
@@ -622,6 +629,26 @@ static void resMgrUpdateState( GstWesterosSink *sink, int state )
    }
 }
 
+static gboolean resMgrCompleteReadyToPaused( GstWesterosSink *sink, gboolean *passToDefault )
+{
+   gboolean result;
+   #ifdef ENABLE_SW_DECODE
+   if ( sink->rm && (sink->resCurrCaps.capabilities & EssRMgrVidCap_software) )
+   {
+      result= wstsw_ready_to_paused( sink, passToDefault );
+   }
+   else
+   #endif
+   {
+      result= gst_westeros_sink_soc_ready_to_paused( sink, passToDefault );
+   }
+   if ( result && sink->rm && sink->resAssignedId >= 0 )
+   {
+      resMgrUpdateState( sink, EssRMgrRes_paused );
+   }
+   return result;
+}
+
 static gboolean gst_westeros_sink_backend_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
    gboolean result;
@@ -657,19 +684,9 @@ static gboolean gst_westeros_sink_backend_ready_to_paused( GstWesterosSink *sink
    {
       result= TRUE;
    }
-   #ifdef ENABLE_SW_DECODE
-   else if ( sink->rm && (sink->resCurrCaps.capabilities & EssRMgrVidCap_software) )
-   {
-      result= wstsw_ready_to_paused( sink, passToDefault );
-   }
-   #endif
    else
    {
-      result= gst_westeros_sink_soc_ready_to_paused( sink, passToDefault );
-   }
-   if ( result && sink->rm && sink->resAssignedId >= 0 )
-   {
-      resMgrUpdateState( sink, EssRMgrRes_paused );
+      result= resMgrCompleteReadyToPaused( sink, passToDefault );
    }
    return result;
 }
