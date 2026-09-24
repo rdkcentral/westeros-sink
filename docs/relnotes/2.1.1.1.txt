@@ -1,0 +1,22 @@
+Westeros Release Notes
+======================
+ 
+Westeros 2.1.1.1 Release Notes
+------------------------------
+ 
+Date: 24 September 2026
+Tag: 2.1.1.1
+Changes:
+
+* [EntOS][8.6p1s2][A2K] Xumoplay app crashed during the app launch post soft reboot with call stack wstSetupOutput
+
+
+Depedencies
+------------
+wayland >= 1.6.0
+libxkbcommon >= 0.8.3
+xkeyboard-config >= 2.18
+gstreamer >= 1.10.4
+EGL >= 1.4
+GLES >= 2.0
+
