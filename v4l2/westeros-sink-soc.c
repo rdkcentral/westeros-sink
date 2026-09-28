@@ -2571,7 +2571,9 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       sink->soc.eosDetectionThread= g_thread_new("wstSinkVidEOS", wstEOSDetectionThread, sink);
    }
 
-   sink->videoStarted= TRUE;
+   sink->videoStarted= FALSE;
+    g_print("Swati gst_westeros_sink_soc_start_video: videoStarted= %d",  sink->videoStarted);
+   /*
    if ( sink->soc.videoPaused )
    {
       LOCK(sink);
@@ -2585,6 +2587,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       UNLOCK(sink);
       g_print("Swati gst_westeros_sink_soc_start_video: transitioning from PAUSED to PLAYING");
    }
+   */
 
    result= TRUE;
 
@@ -7383,6 +7386,8 @@ capture_start:
             if(1 == sink->soc.frameOutCount)
             {
                //This is the first in-segment frame. Check if we need to notify preroll complete and complete async state change.
+	       sink->videoStarted= TRUE;
+	       g_print("Swati wstVideoOutputThread videostarted = %d", sink->videoStarted);
                UNLOCK(sink);
                wstCheckAndCompleteAsyncStateChangeToPaused(GST_BASE_SINK(sink));
                LOCK(sink);
