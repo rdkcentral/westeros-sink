@@ -2069,6 +2069,19 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
          sink->eosEventSeen= FALSE;
          sink->flushStarted= TRUE;
          sink->needSegment= TRUE;
+         /*
+          * Invalidate any cached playback position immediately when flush/seek
+          * begins. A query can race with the later NEWSEGMENT update, and
+          * returning the previous segment's position here would report stale
+          * data even though the stream has been reset.
+          */
+         sink->position= GST_CLOCK_TIME_NONE;
+         sink->currentPTS= 0;
+         sink->positionSegmentStart= 0;
+         sink->prevPositionSegmentStart= 0xFFFFFFFFFFFFFFFFLL;
+         sink->segment.start= -1LL;
+         sink->segment.position= -1LL;
+         sink->queryPositionFromPeer= FALSE;
          UNLOCK( sink );
          timeCodeFlush( sink );
          sinkStatsLogReset( sink );
