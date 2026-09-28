@@ -2168,7 +2168,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 
       if ( sink->soc.frameInCount == 0 )
       {
-         g_printf("first input buffer: fd %d formatsSet %d videoStarted %d \n", sink->soc.v4l2Fd, sink->soc.formatsSet, sink->videoStarted);
+         g_print("first input buffer: fd %d formatsSet %d videoStarted %d \n", sink->soc.v4l2Fd, sink->soc.formatsSet, sink->videoStarted);
       }
 
       if ( !sink->soc.formatsSet )
@@ -7141,11 +7141,12 @@ capture_start:
             pfd.revents= 0;
 
             poll( &pfd, 1, 0);
+	    /*
 	    if ( (++sink->soc.pausedPollLogCount % 2000) == 0 )
             {
                g_print("Swati videoPaused poll: revents 0x%x numBuffersOut %d frameInCount %d frameDecodeCount %d decoderLastFrame %d",
                         pfd.revents, sink->soc.numBuffersOut, sink->soc.frameInCount, sink->soc.frameDecodeCount, sink->soc.decoderLastFrame);
-            }
+            }*/
 
             if ( sink->soc.quitVideoOutputThread ) break;
 
