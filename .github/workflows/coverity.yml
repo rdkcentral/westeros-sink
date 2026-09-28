@@ -23,7 +23,6 @@ jobs:
         with:
           repository: rdkcentral/westeros
           path: westeros-cloned
-          token: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
           fetch-depth: 0
 
       - name: Checkout Westeros GL DRM repository
@@ -31,7 +30,6 @@ jobs:
         with:
           repository: rdkcentral/westeros-gl-drm
           path: westeros-gl-drm-cloned
-          token: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
           fetch-depth: 1
 
       - name: Make scripts executable
@@ -40,8 +38,6 @@ jobs:
           chmod +x ./build.sh
 
       - name: Install dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
         run: bash ./install-dependencies.sh
 
       - name: Build westeros-sink variants
