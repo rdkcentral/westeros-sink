@@ -1901,6 +1901,15 @@ static gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query)
             }
             else
             {
+               LOCK( sink );
+               if ( sink->flushStarted || sink->needSegment ||
+                    sink->position == GST_CLOCK_TIME_NONE )
+               {
+                  UNLOCK( sink );
+                  GST_DEBUG_OBJECT(sink, "Position unavailable during flush or segment transition");
+                  return FALSE;
+               }
+
                if (sink->queryPositionFromPeer && sink->peerPad)
                {
                    if (gst_pad_query(sink->peerPad, query))
@@ -2194,6 +2203,10 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             {
                 GST_DEBUG_OBJECT(sink, "rate change done upstream");
                 sink->queryPositionFromPeer= TRUE;
+            }
+            else
+            {
+               sink->queryPositionFromPeer= FALSE;
             }
             
             if ( 
