@@ -58,6 +58,17 @@
 
 #include "westeros-sink-raw.h"
 
+enum
+{
+   SIGNAL_FIRSTFRAME,
+   SIGNAL_UNDERFLOW,
+   SIGNAL_NEWTEXTURE,
+   SIGNAL_DECODEERROR,
+   SIGNAL_TIMECODE,
+   MAX_SIGNAL
+};
+
+extern guint g_signals[MAX_SIGNAL];
 
 typedef struct _WstVideoClientConnection
 {

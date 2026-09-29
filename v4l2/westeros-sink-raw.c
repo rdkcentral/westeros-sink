@@ -64,16 +64,6 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
 
 enum
 {
-   SIGNAL_FIRSTFRAME,
-   SIGNAL_UNDERFLOW,
-   SIGNAL_NEWTEXTURE,
-   SIGNAL_DECODEERROR,
-   SIGNAL_TIMECODE,
-   MAX_SIGNAL
-};
-
-enum
-{
    ZOOM_NONE,
    ZOOM_DIRECT,
    ZOOM_NORMAL,
@@ -84,7 +74,6 @@ enum
 };
 
 static bool g_frameDebug= false;
-static guint g_signals[MAX_SIGNAL]= {0};
 
 void wstSinkRawStopVideo( GstWesterosSink *sink );
 /*Common For RAW and ENCODED*/
