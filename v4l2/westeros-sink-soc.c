@@ -727,6 +727,7 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
                            "allow frame stepping on preroll into pause", FALSE, G_PARAM_READWRITE));
 
    #ifdef USE_AMLOGIC_MESON_MSYNC
+   g_print("Swati USE_AMLOGIC_MESON_MSYNC PROP_AVSYNC_SESSION\n");
    g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_AVSYNC_SESSION,
      g_param_spec_int ("avsync-session", "avsync session",
                        "avsync session id to link video and audio. If set, this sink won't look for it from audio sink",
@@ -735,6 +736,7 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
      g_param_spec_int ("avsync-mode", "avsync mode",
                        "Vmaster(0) Amaster(1) PCRmaster(2) IPTV(3) FreeRun(4)",
                        G_MININT, G_MAXINT, 0, G_PARAM_WRITABLE));
+   g_print("Swati USE_AMLOGIC_MESON_MSYNC PROP_AVSYNC_MODE\n");
    #endif
 
    g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_LOW_MEMORY_MODE,
@@ -1282,7 +1284,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             {
                sink->soc.userSession= TRUE;
                sink->soc.sessionId= id;
-               GST_WARNING("AV sync session %d", id);
+               g_print("AV sync session %d", id);
             }
             break;
          }
@@ -1292,7 +1294,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             if (mode >= 0)
             {
                sink->soc.syncType= mode;
-               GST_WARNING("AV sync mode %d", mode);
+               g_print("AV sync mode %d", mode);
                if ( (mode >= 0) && (mode <= 4) )
                {
                   sink->soc.userAVSyncMode= TRUE;
@@ -1425,9 +1427,11 @@ void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *
       #ifdef USE_AMLOGIC_MESON_MSYNC
       case PROP_AVSYNC_SESSION:
          g_value_set_int(value, sink->soc.sessionId);
+	 g_print("Swati gst_westeros_sink_soc_get_property sessionid : %d", value);
          break;
       case PROP_AVSYNC_MODE:
          g_value_set_int(value, sink->soc.syncType);
+	 g_print("Swati gst_westeros_sink_soc_get_property syncType: %d", value);
          break;
       #endif
       case PROP_LOW_MEMORY_MODE:
@@ -4785,6 +4789,7 @@ static void wstSendSessionInfoVideoClientConnection( WstVideoClientConnection *c
       msg.msg_controllen= 0;
       msg.msg_flags= 0;
 
+      g_print("Swati wstSendSessionInfoVideoClientConnection syncType: %d sessionId: %d \n", sink->soc.syncType, conn->sink->soc.sessionId);
       len= 0;
       mbody[len++]= 'V';
       mbody[len++]= 'S';
@@ -5308,6 +5313,7 @@ static GstElement* wstFindAudioSink( GstWesterosSink *sink )
 
 static void wstSetSessionInfo( GstWesterosSink *sink )
 {
+	g_print("Swati wstSetSessionInfo ++");
    #if defined USE_AMLOGIC_MESON || defined USE_GENERIC_AVSYNC
    if ( sink->soc.conn )
    {
@@ -5337,11 +5343,13 @@ static void wstSetSessionInfo( GstWesterosSink *sink )
          }
          if ( audioSink )
          {
+		 g_print("Swati wstSetSessionInfo Audiosink");
             GstClock* amlclock= gst_aml_hal_asink_get_clock( audioSink );
             if (amlclock)
             {
                #ifdef USE_AUDIOSINK_SESSION_MODE
                sink->soc.syncType= gst_aml_clock_get_session_mode( amlclock );
+		 g_print("Swati wstSetSessionInfo Audiosink USE_AUDIOSINK_SESSION_MODE");
                #else
                sink->soc.syncType= SYNC_AMASTER;
                #endif
@@ -5350,35 +5358,41 @@ static void wstSetSessionInfo( GstWesterosSink *sink )
             }
             else
             {
-               GST_WARNING ("no clock: vmaster mode");
+               g_print("no clock: vmaster mode");
             }
             gst_object_unref( audioSink );
-            GST_WARNING("AmlHalAsink detected, sesison_id: %d", sink->soc.sessionId);
+            g_print("AmlHalAsink detected, sesison_id: %d", sink->soc.sessionId);
          }
       }
       #else
       sink->soc.syncType= SYNC_VMASTER;
       sink->soc.sessionId= 0;
+               g_print("Swati wstSetSessionInfo Vmaster mode nOT USE_AMLOGIC_MESON_MSYNC");
       audioSink= wstFindAudioSink( sink );
       if ( audioSink )
       {
          sink->soc.syncType= SYNC_AMASTER;
+               g_print("Swati wstSetSessionInfo Amaster mode nOT USE_AMLOGIC_MESON_MSYNC");
          #ifdef USE_GENERIC_AVSYNC
          if ( !gst_base_sink_get_sync(GST_BASE_SINK(sink)) )
          {
+               g_print("Swati wstSetSessionInfo Amaster mode nOT USE_AMLOGIC_MESON_MSYNC 11");
             if ( sink->soc.avsctx && (sink->soc.avsctx->audioSink != audioSink) )
             {
                wstDestroyAVSyncCtx( sink, sink->soc.avsctx );
                sink->soc.avsctx= 0;
+               g_print("Swati wstSetSessionInfo Amaster mode nOT USE_AMLOGIC_MESON_MSYNC 22");
             }
             if ( !sink->soc.avsctx )
             {
                sink->soc.avsctx= wstCreateAVSyncCtx( sink );
                syncTypePrev= -1;
+               g_print("Swati wstSetSessionInfo Amaster mode nOT USE_AMLOGIC_MESON_MSYNC 33");
             }
             if ( sink->soc.avsctx )
             {
                sink->soc.avsctx->audioSink= (GstElement*)gst_object_ref(audioSink);
+               g_print("Swati wstSetSessionInfo Amaster mode nOT USE_AMLOGIC_MESON_MSYNC 44");
             }
          }
          #endif
@@ -5398,6 +5412,7 @@ static void wstSetSessionInfo( GstWesterosSink *sink )
             {
                socClockName= "GstAmlSinkClock";
             }
+	    g_print("Swati Socclock: %s ObjClock %s \n", socClockName, clockName);
             sclen= strlen(socClockName);
             if ( (len == sclen) && !strncmp(clockName, socClockName, len) )
             {
@@ -6933,7 +6948,9 @@ static gpointer wstVideoOutputThread(gpointer data)
 
    LOCK(sink);
    wasPaused= sink->soc.videoServerPaused;
+   g_print("Swati wstVideoOutputThread: videoServerPaused %d", wasPaused);
    UNLOCK(sink);
+
 
 capture_start:
    havePriEvent= false;
@@ -7083,6 +7100,8 @@ capture_start:
       }
       else if ( sink->soc.videoPaused && !sink->soc.frameAdvance )
       {
+	      g_print("wstVideoOutputThread: paused branch videoPaused=%d frameOutCount=%d frameDecodeCount=%d frameInCount=%d",
+                   sink->soc.videoPaused, sink->soc.frameOutCount, sink->soc.frameDecodeCount, sink->soc.frameInCount);
          LOCK(sink);
 	 g_print("wstVideoOutputThread: videoPaused");
          wstProcessMessagesVideoClientConnection( sink->soc.conn );
@@ -7212,6 +7231,7 @@ capture_start:
          }
          if ( wasPaused && !sink->soc.videoPaused )
          {
+		 g_print("Swati wstSendPauseVideoClientConnection FALSE");
             #ifdef USE_AMLOGIC_MESON_MSYNC
             if ( !sink->soc.userSession )
             #endif
@@ -7375,17 +7395,21 @@ capture_start:
 
             if ( sink->soc.quitVideoOutputThread )
             {
+		    g_print("wstVideoOutputThread: quitVideoOutputThread %d \n", sink->soc.quitVideoOutputThread);
                UNLOCK(sink);
                break;
             }
             if ( !sink->soc.conn && (sink->soc.frameOutCount == 0))
             {
+                g_print("wstVideoOutputThread: first output frame before increment, emitFirstFrameSignal=TRUE");
                 sink->soc.emitFirstFrameSignal= TRUE;
             }
             ++sink->soc.frameOutCount;
             if(1 == sink->soc.frameOutCount)
             {
                //This is the first in-segment frame. Check if we need to notify preroll complete and complete async state change.
+	       g_print("wstVideoOutputThread: first real decoded frame observed, frameOutCount=%d setting videoStarted=TRUE",
+                         sink->soc.frameOutCount);
 	       sink->videoStarted= TRUE;
 	       g_print("Swati wstVideoOutputThread videostarted = %d", sink->videoStarted);
                UNLOCK(sink);
