@@ -1901,6 +1901,15 @@ static gboolean gst_westeros_sink_query(GstElement *element, GstQuery *query)
             }
             else
             {
+               LOCK( sink );
+               if ( sink->flushStarted || sink->needSegment ||
+                    sink->position == GST_CLOCK_TIME_NONE )
+               {
+                  UNLOCK( sink );
+                  GST_DEBUG_OBJECT(sink, "Position unavailable during flush or segment transition");
+                  return FALSE;
+               }
+
                if (sink->queryPositionFromPeer && sink->peerPad)
                {
                    if (gst_pad_query(sink->peerPad, query))
@@ -2069,6 +2078,19 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
          sink->eosEventSeen= FALSE;
          sink->flushStarted= TRUE;
          sink->needSegment= TRUE;
+         /*
+          * Invalidate any cached playback position immediately when flush/seek
+          * begins. A query can race with the later NEWSEGMENT update, and
+          * returning the previous segment's position here would report stale
+          * data even though the stream has been reset.
+          */
+         sink->position= GST_CLOCK_TIME_NONE;
+         sink->currentPTS= 0;
+         sink->positionSegmentStart= 0;
+         sink->prevPositionSegmentStart= 0xFFFFFFFFFFFFFFFFLL;
+         sink->segment.start= -1LL;
+         sink->segment.position= -1LL;
+         sink->queryPositionFromPeer= FALSE;
          UNLOCK( sink );
          timeCodeFlush( sink );
          sinkStatsLogReset( sink );
@@ -2182,6 +2204,10 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                 GST_DEBUG_OBJECT(sink, "rate change done upstream");
                 sink->queryPositionFromPeer= TRUE;
             }
+            else
+            {
+               sink->queryPositionFromPeer= FALSE;
+            }
             
             if ( 
                  (segmentFormat == GST_FORMAT_TIME) && 
@@ -2194,12 +2220,24 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                sink->position= GST_TIME_AS_NSECONDS(segmentStart);
                sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentStart);
                sink->startPTS= (GST_TIME_AS_MSECONDS(segmentStart)*90LL);
+
+               /*
+                * Re-sync the first-PTS baseline immediately with the new segment. This
+                * avoids a race where late status messages from the previous segment still
+                * arrive after the segment boundary has changed but before firstPTS is
+                * updated from the first buffer of the new segment.
+                */
+               sink->firstPTS= sink->startPTS;
+               sink->prevPositionSegmentStart= sink->positionSegmentStart;
+
                if ( sink->useSegmentPosition &&
                     (segmentStart != segmentPosition) &&
                     (segmentPosition != -1LL) )
                {
                   sink->position= GST_TIME_AS_NSECONDS(segmentPosition);
                   sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentPosition);
+                  sink->firstPTS= sink->startPTS;
+                  sink->prevPositionSegmentStart= sink->positionSegmentStart;
                }
                gst_westeros_sink_soc_set_startPTS( sink, sink->startPTS );
             }
