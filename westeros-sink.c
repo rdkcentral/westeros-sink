@@ -2105,14 +2105,11 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             gboolean eosDetected= sink->eosDetected;
             sink->eosEventSeen= TRUE;
             UNLOCK( sink );
-            if ( eosDetected )
-            {
-               passToDefault= TRUE;
-            }
-            else
+            if ( !eosDetected )
             {
                gst_westeros_sink_soc_eos_event( sink );
             }
+	        passToDefault= TRUE;
          }
          break;
          
