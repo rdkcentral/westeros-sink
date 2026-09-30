@@ -3250,6 +3250,7 @@ static void wstProcessEvents( GstWesterosSink *sink )
                      (fmtOut.fmt.pix.height != sink->soc.fmtOut.fmt.pix.height) ) ) ||
                  (sink->soc.frameOutCount > 0) )
             {
+		    wstResetSourceSwitchState( sink );
                wstTearDownOutputBuffers( sink );
 
                if ( sink->soc.isMultiPlane )
@@ -4304,6 +4305,7 @@ static int wstGetOutputBuffer( GstWesterosSink *sink )
 
    if ( sink->soc.decoderLastFrame )
    {
+      g_print("Swati wstGetOutputBuffer decoderLastFrame\n");
       goto exit;
    }
    memset( &buf, 0, sizeof(buf));
@@ -4338,7 +4340,7 @@ static int wstGetOutputBuffer( GstWesterosSink *sink )
    }
    else
    {
-      GST_ERROR("failed to de-queue output buffer: rc %d errno %d", rc, errno);
+      g_print("failed to de-queue output buffer: rc %d errno %d", rc, errno);
       if ( errno == EPIPE )
       {
          /* Decoding is done: no more capture buffers can be dequeued */
@@ -6026,6 +6028,27 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
    UNLOCK(sink);
 }
 
+static void wstResetSourceSwitchState( GstWesterosSink *sink )
+{
+   g_print("Swati wstResetSourceSwitchState ++");
+   LOCK(sink);
+   sink->videoStarted= FALSE;
+   sink->soc.frameInCount= 0;
+   sink->soc.frameOutCount= 0;
+   sink->soc.frameDecodeCount= 0;
+   sink->soc.frameDisplayCount= 0;
+   sink->soc.numDropped= 0;
+   sink->soc.decoderLastFrame= 0;
+   sink->soc.decoderEOS= 0;
+   sink->soc.videoDecodeStartTime= 0;
+   sink->soc.emitFirstFrameSignal= FALSE;
+   sink->soc.needCaptureRestart= FALSE;
+   sink->soc.lastBuffer= 0;
+   sink->soc.prerollBuffer= 0;
+   sink->soc.startedOutOfSegment= FALSE;
+   UNLOCK(sink);
+}
+
 typedef struct bufferInfo
 {
    GstWesterosSink *sink;
@@ -7177,6 +7200,7 @@ capture_start:
                  (havePriEvent || (pfd.revents & POLLPRI)) )
             {
                havePriEvent= false;
+	       g_print("Swati %d wstVideoOutputThread \n", sink->soc.decoderLastFrame);
                wstProcessEvents( sink );
                if ( sink->soc.needCaptureRestart )
                {
@@ -7541,13 +7565,14 @@ static gpointer wstEOSDetectionThread(gpointer data)
    bool eosEventSeen;
    double frameRate;
 
-   GST_DEBUG("wstVideoEOSThread: enter");
+   g_print("wstVideoEOSThread: enter");
 
    eosCountDown= 2;
    decoderEOS= 0;
    LOCK(sink)
    outputFrameCount= sink->soc.frameOutCount;
    frameRate= (sink->soc.frameRate > 0.0 ? sink->soc.frameRate : 30.0);
+   g_print("wstVideoEOSThread: outputFrameCount %d frameRate %d \n", outputFrameCount, frameRate);
    UNLOCK(sink);
    while( !sink->soc.quitEOSDetectionThread )
    {
@@ -7566,10 +7591,11 @@ static gpointer wstEOSDetectionThread(gpointer data)
 
          if ( eosEventSeen )
          {
-            GST_DEBUG("waiting for eos: frameOutCount %d displayCount %d (%d+%d)", count, displayCount, sink->soc.frameDisplayCount, sink->soc.numDropped);
+            g_print("waiting for eos: frameOutCount %d displayCount %d (%d+%d)", count, displayCount, sink->soc.frameDisplayCount, sink->soc.numDropped);
          }
          if ( videoPlaying && eosEventSeen && decoderEOS && !decoderEOSPrev )
          {
+		  g_print("wstVideoEOSThread sending wstSendEosVideoClientConnection\n");
             wstSendEosVideoClientConnection( sink->soc.conn );
          }
          if ( videoPlaying && eosEventSeen && decoderEOS && (count <= displayCount) && (outputFrameCount == count) )
@@ -7588,7 +7614,7 @@ static gpointer wstEOSDetectionThread(gpointer data)
                   GstBaseSink *bs;
                   bs= GST_BASE_SINK(sink);
                   GST_BASE_SINK_PREROLL_LOCK(bs);
-                  GST_DEBUG("EOS: need_preroll %d have_preroll %d", bs->need_preroll, bs->have_preroll);
+                  g_print("EOS: need_preroll %d have_preroll %d", bs->need_preroll, bs->have_preroll);
                   if ( bs->need_preroll )
                   {
                      GstState cur, nxt, pend;
@@ -7603,19 +7629,19 @@ static gpointer wstEOSDetectionThread(gpointer data)
                      GST_STATE_NEXT(bs)= GST_STATE_PENDING(bs)= GST_STATE_VOID_PENDING;
                      GST_STATE_RETURN(bs)= GST_STATE_CHANGE_SUCCESS;
                      GST_OBJECT_UNLOCK(bs);
-                     GST_DEBUG("EOS posting state change: curr(%s) next(%s) pending(%s)",
+                     g_print("EOS posting state change: curr(%s) next(%s) pending(%s)",
                                gst_element_state_get_name(cur),
                                gst_element_state_get_name(nxt),
                                gst_element_state_get_name(pend));
                      gst_element_post_message(GST_ELEMENT_CAST(bs), gst_message_new_state_changed(GST_OBJECT_CAST(bs), cur, nxt, pend));
-                     GST_DEBUG("EOS posting async done");
+                     g_print("EOS posting async done");
                      gst_element_post_message(GST_ELEMENT_CAST(bs), gst_message_new_async_done(GST_OBJECT_CAST(bs), GST_CLOCK_TIME_NONE));
                      GST_STATE_BROADCAST(bs)
                   }
                   GST_BASE_SINK_PREROLL_UNLOCK(bs);
-                  GST_DEBUG("EOS: calling eos detected: need_preroll %d have_preroll %d", bs->need_preroll, bs->have_preroll);
+                  g_print("EOS: calling eos detected: need_preroll %d have_preroll %d", bs->need_preroll, bs->have_preroll);
                   gst_westeros_sink_eos_detected( sink );
-                  GST_DEBUG("EOS: done calling eos detected: need_preroll %d have_preroll %d", bs->need_preroll, bs->have_preroll);
+                  g_print("EOS: done calling eos detected: need_preroll %d have_preroll %d", bs->need_preroll, bs->have_preroll);
                }
                break;
             }
