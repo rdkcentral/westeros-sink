@@ -217,6 +217,7 @@ static void wstProcessTextureSignal( GstWesterosSink *sink, int buffIndex );
 static bool wstProcessTextureWayland( GstWesterosSink *sink, int buffIndex );
 static int wstFindVideoBuffer( GstWesterosSink *sink, int frameNumber );
 static int wstFindCurrentVideoBuffer( GstWesterosSink *sink );
+static void wstResetSourceSwitchState( GstWesterosSink *sink );
 static gpointer wstVideoOutputThread(gpointer data);
 static gpointer wstEOSDetectionThread(gpointer data);
 static gpointer wstDispatchThread(gpointer data);
