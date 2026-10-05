@@ -2635,6 +2635,8 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    gboolean result= FALSE;
    int rc;
 
+   GST_DEBUG("7468 --> Resetting the frameInCount value\n");
+   sink->soc.frameInCount= 0;
    sink->soc.frameOutCount= 0;
    sink->soc.frameDecodeCount= 0;
    sink->soc.frameDisplayCount= 0;
@@ -7403,8 +7405,9 @@ capture_start:
                   gint64 now= g_get_monotonic_time();
                   float frameRate= (sink->soc.frameRate != 0.0 ? sink->soc.frameRate : 30.0);
                   float frameDelay= sink->soc.frameInCount / frameRate;
+
 //                  GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
-                 GST_ERROR("7468-->frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
+                 GST_ERROR("7468-->frameRate:%f, frameInCount: %f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, sink->soc.frameInCount, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
                      sink->soc.decodeError= TRUE;
