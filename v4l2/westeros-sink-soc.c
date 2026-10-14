@@ -1630,6 +1630,7 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
    LOCK( sink );
    sink->soc.videoPlaying= TRUE;
    sink->soc.videoPaused= FALSE;
+   GST_DEBUG("videoPaused value in gst_westeros_sink_soc_paused_to_playing:%d\n",sink->soc.videoPaused);
    #ifdef USE_AMLOGIC_MESON_MSYNC
    if ( !sink->soc.userSession )
    #endif
@@ -1651,7 +1652,7 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
    sink->soc.videoPlaying= FALSE;
    sink->soc.videoPaused= TRUE;
    UNLOCK( sink );
-
+   GST_DEBUG("videoPaused value in gst_westeros_sink_soc_playing_to_paused:%d\n",sink->soc.videoPaused);
    if ((sink->soc.sinkMode == WST_SINK_MODE_RAW))
    {
       wstSendPauseVideoClientConnection( sink->soc.conn, true );
@@ -2625,6 +2626,8 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    gboolean result= FALSE;
    int rc;
 
+   GST_DEBUG("7468 --> Resetting the frameInCount value\n");
+   sink->soc.frameInCount= 0;
    sink->soc.frameOutCount= 0;
    sink->soc.frameDecodeCount= 0;
    sink->soc.frameDisplayCount= 0;
@@ -7048,6 +7051,7 @@ static void wstLowLatencyModePushFrame(GstWesterosSink *sink, GstBuffer *buffer)
 		sink->soc.emitFirstFrameSignal= TRUE;
 	++sink->soc.frameDecodeCount;
 	++sink->soc.frameOutCount;
+	GST_DEBUG("frameDecodeCount:%d, frameOutCount:%d in wstLowLatencyModePushFrame\n",sink->soc.frameDecodeCount, sink->soc.frameOutCount);
 	UNLOCK(sink);
 }
 
@@ -7067,9 +7071,11 @@ static gpointer wstVideoOutputThread(gpointer data)
    UNLOCK(sink);
 
 capture_start:
+   GST_DEBUG("7468--> In capture start block\n");
    havePriEvent= false;
    if ( sink->soc.numBuffersOut )
    {
+	  GST_DEBUG("7468--> in if loop of capture_start \n");
       LOCK(sink);
       if ( (sink->soc.v4l2Fd == -1) || (sink->soc.outBuffers == 0) || sink->soc.quitVideoOutputThread )
       {
@@ -7211,6 +7217,7 @@ capture_start:
       }
       else if ( sink->soc.videoPaused && !sink->soc.frameAdvance )
       {
+	 GST_DEBUG(" 7468--> In else if block in infinite for loop in output thread\n");
          LOCK(sink);
          wstProcessMessagesVideoClientConnection( sink->soc.conn );
          if ( !wasPaused )
@@ -7264,6 +7271,8 @@ capture_start:
 
          if ( sink->soc.hasEvents )
          {
+
+	    GST_DEBUG("7468 --> entering the hasEvents before capture_ready\n");
             struct pollfd pfd;
 
             pfd.fd= sink->soc.v4l2Fd;
@@ -7290,6 +7299,7 @@ capture_start:
 
             if ( pfd.revents & (POLLIN|POLLRDNORM) )
             {
+			   GST_DEBUG("7468--> goto capture_Ready is going to be called \n");
                goto capture_ready;
             }
          }
@@ -7298,7 +7308,8 @@ capture_start:
       }
       else
       {
-         LOCK(sink);
+         GST_DEBUG("7468--> In else block  of infinite for loop \n");
+	      LOCK(sink);
          #ifdef USE_GENERIC_AVSYNC
          wstUpdateAVSyncCtx( sink, sink->soc.avsctx );
          #endif
@@ -7371,6 +7382,8 @@ capture_start:
                if ( (!sink->soc.numBuffersOut || (sink->soc.decoderLastFrame || sink->soc.expectNoLastFrame)) &&
                     (havePriEvent || (pfd.revents & POLLPRI)) )
                {
+				  GST_DEBUG("7468--> process events going to be called\n");
+
                   pfd.revents &= ~POLLPRI;
                   havePriEvent= false;
                   wstProcessEvents( sink );
@@ -7379,12 +7392,15 @@ capture_start:
                      break;
                   }
                }
+	        GST_DEBUG("in 7468 ouput thread --> sink->soc.frameDecodeCount:%d, sink->soc.frameInCount:%d, sink->soc.videoPaused:%d, ink->soc.decodeError:%d\n",sink->soc.frameDecodeCount, sink->soc.frameInCount,sink->soc.videoPaused,sink->soc.decodeError);
                if ( (sink->soc.frameDecodeCount == 0) && (sink->soc.frameInCount > 0) && !sink->soc.videoPaused && !sink->soc.decodeError )
                {
                   gint64 now= g_get_monotonic_time();
                   float frameRate= (sink->soc.frameRate != 0.0 ? sink->soc.frameRate : 30.0);
                   float frameDelay= sink->soc.frameInCount / frameRate;
-                  GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
+
+//                  GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
+                 GST_ERROR("7468-->frameRate:%f, frameInCount: %f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, sink->soc.frameInCount, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
                      sink->soc.decodeError= TRUE;
@@ -7502,8 +7518,10 @@ capture_start:
             if ( !sink->soc.conn && (sink->soc.frameOutCount == 0))
             {
                 sink->soc.emitFirstFrameSignal= TRUE;
+	        GST_DEBUG("emitFirstFrameSignal is made to true in capture_ready\n");
             }
             ++sink->soc.frameOutCount;
+	    GST_DEBUG("frameOutCount in capture_ready:%d\n",sink->soc.frameOutCount);
             if(1 == sink->soc.frameOutCount)
             {
                //This is the first in-segment frame. Check if we need to notify preroll complete and complete async state change.
