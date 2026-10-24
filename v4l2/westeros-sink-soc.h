@@ -271,6 +271,12 @@ struct _GstWesterosSinkSoc
    int decoderLastFrame;
    int decoderEOS;
    uint32_t numDropped;
+   guint metricSourceId;
+   guint64 metricRendered;
+   guint64 metricDropped;
+   guint64 metricCorrupted;
+   uint32_t metricPrevNumDropped;
+   gint64 metricPrevFrameTime;
    uint32_t inputFormat;
    uint32_t outputFormat;
    gboolean interlaced;
@@ -460,4 +466,5 @@ WstVideoClientConnection *wstCreateVideoClientConnection( GstWesterosSink *sink,
 void wstDestroyVideoClientConnection( WstVideoClientConnection *conn );
 bool wstAuthenticateVideoClientConnection( WstVideoClientConnection *conn );
 #endif
+
 

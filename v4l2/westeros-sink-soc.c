@@ -123,8 +123,24 @@ enum
   PROP_VFRAME_SOURCE_TYPE,
   PROP_STOP_KEEP_FRAME,
   PROP_STATS,
-  PROP_LOW_LATENCY_MODE
+  PROP_LOW_LATENCY_MODE,
+  PROP_METRICS_SOURCE_ID
 };
+
+/* metric_type values of the "media-pipeline-metric" bus message */
+enum
+{
+   METRIC_VIDEO_FRAME_DROP= 0,
+   METRIC_AUDIO_FRAME_DROP= 1,
+   METRIC_VIDEO_DECODE_ERROR= 2,
+   METRIC_AUDIO_DECODE_ERROR= 3,
+   METRIC_VIDEO_FRAME_REPEAT= 4,
+   METRIC_AUDIO_GAP= 5,
+   METRIC_BUFFER_UNDERFLOW= 6
+};
+
+/* decoded PTS jumps larger than this are treated as discontinuities, not gaps (us) */
+#define METRIC_MAX_GAP_US (1000000LL)
 enum
 {
    ZOOM_NONE,
@@ -215,6 +231,7 @@ static gpointer wstVideoOutputThread(gpointer data);
 static gpointer wstEOSDetectionThread(gpointer data);
 static gpointer wstDispatchThread(gpointer data);
 static void postErrorMessage( GstWesterosSink *sink, int errorCode, const char *errorText, const char *description );
+static void wstPostMetric( GstWesterosSink *sink, guint metricType, guint64 ptsNs );
 static GstFlowReturn prerollSinkSoc(GstBaseSink *base_sink, GstBuffer *buffer);
 static int ioctl_wrapper( int fd, int request, void* arg );
 #ifdef USE_GENERIC_AVSYNC
@@ -817,6 +834,12 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
                            "video low latency mode",
                            "Low latency video playback. Only support H.264 and AV1. 0: disable; 1: enable", FALSE, G_PARAM_READWRITE));
 
+   g_object_class_install_property (gobject_class, PROP_METRICS_SOURCE_ID,
+     g_param_spec_uint ("metrics-source-id",
+                        "metrics source id",
+                        "source_id reported in media-pipeline-metric bus messages",
+                        0, G_MAXUINT, 0, G_PARAM_READWRITE));
+
    g_signals[SIGNAL_FIRSTFRAME]= g_signal_new( "first-video-frame-callback",
                                                G_TYPE_FROM_CLASS(GST_ELEMENT_CLASS(klass)),
                                                (GSignalFlags) (G_SIGNAL_RUN_LAST),
@@ -994,6 +1017,12 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.decoderLastFrame= 0;
    sink->soc.decoderEOS= 0;
    sink->soc.numDropped= 0;
+   sink->soc.metricSourceId= 0;
+   sink->soc.metricRendered= 0;
+   sink->soc.metricDropped= 0;
+   sink->soc.metricCorrupted= 0;
+   sink->soc.metricPrevNumDropped= 0;
+   sink->soc.metricPrevFrameTime= -1LL;
    sink->soc.inputFormat= 0;
    sink->soc.outputFormat= WL_SB_FORMAT_NV12;
    sink->soc.interlaced= FALSE;
@@ -1459,6 +1488,12 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             GST_DEBUG("set lowLatencyMode %d", sink->soc.lowLatencyMode);
             break;
          }
+      case PROP_METRICS_SOURCE_ID:
+         {
+            sink->soc.metricSourceId= g_value_get_uint(value);
+            GST_DEBUG("set metricSourceId %u", sink->soc.metricSourceId);
+            break;
+         }
       default:
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
          break;
@@ -1558,6 +1593,9 @@ void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *
          break;
       case PROP_LOW_LATENCY_MODE:
          g_value_set_boolean(value, sink->soc.lowLatencyMode);
+         break;
+      case PROP_METRICS_SOURCE_ID:
+         g_value_set_uint(value, sink->soc.metricSourceId);
          break;
       default:
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -5670,6 +5708,24 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                            guint64 frameTime= getS64( &m[4] );
                            sink->soc.numDropped= getU32( &m[12] );
                            FRAME( "out:       status received: frameTime %lld numDropped %d", frameTime, sink->soc.numDropped);
+                           if ( sink->soc.numDropped != sink->soc.metricPrevNumDropped )
+                           {
+                              /* server count going backwards means it was reset */
+                              uint32_t newDrops= (sink->soc.numDropped > sink->soc.metricPrevNumDropped)
+                                                 ? sink->soc.numDropped - sink->soc.metricPrevNumDropped
+                                                 : sink->soc.numDropped;
+                              sink->soc.metricPrevNumDropped= sink->soc.numDropped;
+                              if ( newDrops )
+                              {
+                                 sink->soc.metricDropped += newDrops;
+                                 wstPostMetric( sink, METRIC_VIDEO_FRAME_DROP, (frameTime != -1LL) ? frameTime*1000LL : 0 );
+                              }
+                           }
+                           if ( (frameTime != -1LL) && ((gint64)frameTime == sink->soc.metricPrevFrameTime) && (sink->soc.frameOutCount > 0) )
+                           {
+                              wstPostMetric( sink, METRIC_VIDEO_FRAME_REPEAT, frameTime*1000LL );
+                           }
+                           sink->soc.metricPrevFrameTime= frameTime;
                            if ( frameTime != -1LL )
                            {
                               gint64 currentNano= frameTime*1000LL;
@@ -5695,6 +5751,7 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                                        sink->soc.emitFirstFrameSignal= TRUE;
                                     }
                                     ++sink->soc.frameDisplayCount;
+                                    ++sink->soc.metricRendered;
                                  }
                                  break;  /* Early exit - no position calculation for stale frameTime.  */
                               }
@@ -5713,6 +5770,7 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                                      sink->soc.emitFirstFrameSignal= TRUE;
                                  }
                                  ++sink->soc.frameDisplayCount;
+                                 ++sink->soc.metricRendered;
                                  if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
                                  {
                                     sink->timeCodePresent( sink, sink->position, g_signals[SIGNAL_TIMECODE] );
@@ -5730,6 +5788,7 @@ static void wstProcessMessagesVideoClientConnection( WstVideoClientConnection *c
                            if ( !sink->eosEventSeen )
                            {
                               sink->soc.emitUnderflowSignal= TRUE;
+                              wstPostMetric( sink, METRIC_BUFFER_UNDERFLOW, (frameTime != -1LL) ? frameTime*1000LL : 0 );
                            }
                         }
                         break;
@@ -7432,6 +7491,14 @@ capture_start:
 
          ++sink->soc.frameDecodeCount;
 
+         if ( sink->soc.outBuffers[buffIndex].buf.flags & V4L2_BUF_FLAG_ERROR )
+         {
+            guint64 errPTS= sink->soc.outBuffers[buffIndex].buf.timestamp.tv_sec * 1000000000LL + sink->soc.outBuffers[buffIndex].buf.timestamp.tv_usec * 1000LL;
+            GST_WARNING("decoded frame flagged with error: PTS %llu", errPTS);
+            ++sink->soc.metricCorrupted;
+            wstPostMetric( sink, METRIC_VIDEO_DECODE_ERROR, errPTS );
+         }
+
          {
             gint64 currFramePTS= 0;
             bool gfxFrame= false;
@@ -7461,6 +7528,20 @@ capture_start:
                currFramePTS= sink->soc.prevDecodedTimestamp + 1000000LL/rate;
                sink->soc.outBuffers[buffIndex].buf.timestamp.tv_sec= currFramePTS / 1000000LL;
                sink->soc.outBuffers[buffIndex].buf.timestamp.tv_usec= currFramePTS % 1000000LL;
+            }
+            if ( (sink->soc.frameDecodeCount > 1) && (sink->soc.frameRate > 0.0) && (currFramePTS > sink->soc.prevDecodedTimestamp) )
+            {
+               double rate= (sink->soc.interlaced ? sink->soc.frameRate*2 : sink->soc.frameRate);
+               gint64 period= 1000000LL/rate;
+               gint64 delta= currFramePTS - sink->soc.prevDecodedTimestamp;
+               if ( (period > 0) && (delta > period + period/2) && (delta < METRIC_MAX_GAP_US) )
+               {
+                  /* frames missing from decoder output are reported as drops */
+                  guint64 missing= (delta + period/2)/period - 1;
+                  GST_INFO("video frame gap: prev %lld curr %lld us, %llu frames missing", sink->soc.prevDecodedTimestamp, currFramePTS, missing);
+                  sink->soc.metricDropped += missing;
+                  wstPostMetric( sink, METRIC_VIDEO_FRAME_DROP, (sink->soc.prevDecodedTimestamp + period)*1000LL );
+               }
             }
             sink->soc.prevDecodedTimestamp= currFramePTS;
             guint64 frameTime= sink->soc.outBuffers[buffIndex].buf.timestamp.tv_sec * 1000000000LL + sink->soc.outBuffers[buffIndex].buf.timestamp.tv_usec * 1000LL;
@@ -7502,6 +7583,10 @@ capture_start:
             if ( !sink->soc.conn && (sink->soc.frameOutCount == 0))
             {
                 sink->soc.emitFirstFrameSignal= TRUE;
+            }
+            if ( !sink->soc.conn )
+            {
+               ++sink->soc.metricRendered;
             }
             ++sink->soc.frameOutCount;
             if(1 == sink->soc.frameOutCount)
@@ -7776,6 +7861,33 @@ static void postErrorMessage( GstWesterosSink *sink, int errorCode, const char *
    else
    {
       GST_ERROR("Error: g_error_new_literal failed for errorCode %d errorText (%s)", errorCode, errorText );
+   }
+
+   {
+      gint64 pts= sink->currentPTS;
+      wstPostMetric( sink, METRIC_VIDEO_DECODE_ERROR, ((pts/90LL)*GST_MSECOND)+((pts%90LL)*GST_MSECOND/90LL) );
+   }
+}
+
+static void wstPostMetric( GstWesterosSink *sink, guint metricType, guint64 ptsNs )
+{
+   GstStructure *s= gst_structure_new( "media-pipeline-metric",
+                                       "metric_type", G_TYPE_UINT, metricType,
+                                       "source_id", G_TYPE_UINT, sink->soc.metricSourceId,
+                                       "rendered_frames", G_TYPE_UINT64, sink->soc.metricRendered,
+                                       "dropped_frames", G_TYPE_UINT64, sink->soc.metricDropped,
+                                       "corrupted_frames", G_TYPE_UINT64, sink->soc.metricCorrupted,
+                                       "pts_ns", G_TYPE_UINT64, ptsNs,
+                                       NULL );
+   if ( s )
+   {
+      GstMessage *msg= gst_message_new_element( GST_OBJECT_CAST(sink), s );
+      GST_DEBUG("post media-pipeline-metric: type %u source %u rendered %llu dropped %llu corrupted %llu pts %llu",
+                metricType, sink->soc.metricSourceId, sink->soc.metricRendered, sink->soc.metricDropped, sink->soc.metricCorrupted, ptsNs);
+      if ( !msg || !gst_element_post_message( GST_ELEMENT(sink), msg ) )
+      {
+         GST_WARNING("unable to post media-pipeline-metric type %u", metricType);
+      }
    }
 }
 
@@ -8806,3 +8918,4 @@ static gboolean wstSocEnsureReadyToPausedInitialized( GstWesterosSink *sink )
 
    return result;
 }
+
