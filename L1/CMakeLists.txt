@@ -96,10 +96,13 @@ endif()
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -L WesterosSink
         COMMAND "${LCOV_EXECUTABLE}" --capture
                 --directory "${CMAKE_BINARY_DIR}"
+                --ignore-errors inconsistent
+                --no-external
             --output-file "${CMAKE_BINARY_DIR}/coverage_westeros_sink.info"
         COMMAND "${LCOV_EXECUTABLE}" --extract
                 "${CMAKE_BINARY_DIR}/coverage_westeros_sink.info"
                 "*/westeros-sink.c"
+                --ignore-errors inconsistent
             --output-file "${CMAKE_BINARY_DIR}/coverage_westeros_sink_filtered.info"
         COMMAND "${CMAKE_COMMAND}"
             "-DCOVERAGE_INFO=${CMAKE_BINARY_DIR}/coverage_westeros_sink_filtered.info"
@@ -110,6 +113,7 @@ endif()
             --title "Westeros Sink L1 Coverage" --legend --branch-coverage
         COMMAND "${LCOV_EXECUTABLE}" --summary
                 "${CMAKE_BINARY_DIR}/coverage_westeros_sink_filtered.info"
+                --ignore-errors inconsistent
         DEPENDS test_westeros_sink_l1
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
         COMMENT "Running Westeros sink L1 tests and reporting westeros-sink.c coverage"
