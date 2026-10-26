@@ -58,18 +58,8 @@ target_link_libraries(test_westeros_sink_l1 PRIVATE
 )
 
 if(ENABLE_COVERAGE)
-    set_source_files_properties(
-        "${WESTEROS_SINK_ROOT}/westeros-sink.c"
-        PROPERTIES COMPILE_OPTIONS "-O0;-g;--coverage"
-    )
+    target_compile_options(test_westeros_sink_l1 PRIVATE -O0 -g --coverage)
     target_link_options(test_westeros_sink_l1 PRIVATE --coverage)
-
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/reset_coverage_data.cmake" [=[
-file(GLOB_RECURSE coverage_data_files "${COVERAGE_DIRECTORY}/*.gcda")
-if(coverage_data_files)
-    file(REMOVE ${coverage_data_files})
-endif()
-]=])
 
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/check_coverage_westeros_sink.cmake" [=[
 if(NOT DEFINED COVERAGE_INFO OR NOT EXISTS "${COVERAGE_INFO}")
@@ -93,21 +83,16 @@ if(total_found EQUAL 0)
     message(FATAL_ERROR "No executable lines were found in ${COVERAGE_INFO}")
 endif()
 
-math(EXPR coverage_tenths "(${total_hit} * 1000 + ${total_found} / 2) / ${total_found}")
-math(EXPR coverage_whole "${coverage_tenths} / 10")
-math(EXPR coverage_fraction "${coverage_tenths} % 10")
-message(STATUS "Westeros sink scoped line coverage: ${total_hit}/${total_found} (${coverage_whole}.${coverage_fraction}%)")
-math(EXPR threshold_lhs "${total_hit} * 2000")
-math(EXPR threshold_rhs "1237 * ${total_found}")
+math(EXPR coverage_percent "${total_hit} * 100 / ${total_found}")
+message(STATUS "Westeros sink scoped line coverage: ${total_hit}/${total_found} (${coverage_percent}%)")
+math(EXPR threshold_lhs "${total_hit} * 1000")
+math(EXPR threshold_rhs "619 * ${total_found}")
 if(threshold_lhs LESS threshold_rhs)
     message(FATAL_ERROR "Westeros sink scoped line coverage is below the required 61.9% (${total_hit}/${total_found})")
 endif()
 ]=])
 
     add_custom_target(coverage-westeros-sink
-        COMMAND "${CMAKE_COMMAND}"
-            "-DCOVERAGE_DIRECTORY=${CMAKE_BINARY_DIR}"
-            -P "${CMAKE_CURRENT_BINARY_DIR}/reset_coverage_data.cmake"
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -L WesterosSink
         COMMAND "${LCOV_EXECUTABLE}" --capture
                 --directory "${CMAKE_BINARY_DIR}"

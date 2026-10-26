@@ -75,9 +75,15 @@ COMMON_FLAGS="$COMMON_FLAGS $GSTREAMER_CFLAGS $WAYLAND_CFLAGS $DRM_CFLAGS"
 
 # Combine all linker flags into one variable
 LINK_LIBS="$GSTREAMER_LIBS $WAYLAND_LIBS $DRM_LIBS -L/usr/local/lib -lwesteros_simplebuffer_client -lwesteros_simpleshell_client -lgbm -lEGL -lGLESv2 -ldl -lpthread"
-# Software decoder flags
-SW_DECODER_FLAGS="-DENABLE_SW_DECODE"
-SW_DECODER_LIBS="-lavcodec -lavutil"
+# Software decoder is optional and only enabled when the FFmpeg development toolchain is available.
+SW_DECODER_FLAGS=""
+SW_DECODER_LIBS=""
+if pkg-config --exists libavcodec libavutil; then
+    SW_DECODER_FLAGS="-DENABLE_SW_DECODE"
+    SW_DECODER_LIBS="-lavcodec -lavutil"
+else
+    echo "NOTE: FFmpeg development packages are not installed; skipping software-decoder variants."
+fi
 
 # Build function
 build_variant() {
@@ -165,13 +171,17 @@ rm -rf "$BUILD_DIR" "$INSTALL_DIR"
 mkdir -p "$BUILD_DIR" "$INSTALL_DIR"
 
 # Build variants
-build_variant "brcm" "$SW_DECODER_FLAGS" "$SW_DECODER_LIBS" "-I${PROJECT_ROOT}/westeros-cloned/test/brcm-em/include"
+if [ -n "$SW_DECODER_FLAGS" ]; then
+    build_variant "brcm" "$SW_DECODER_FLAGS" "$SW_DECODER_LIBS" "-I${PROJECT_ROOT}/westeros-cloned/test/brcm-em/include"
+    build_variant "v4l2" "$SW_DECODER_FLAGS -DUSE_GST_AFD" "$SW_DECODER_LIBS" "-Iv4l2 -Iv4l2/svp"
+else
+    echo "NOTE: Skipping BRCM and V4L2 software-decoder variants because FFmpeg dev packages are unavailable."
+fi
 build_variant "drm" "" "" "-I/usr/include/libdrm"
 build_variant "emu" "-DEMU" ""
 build_variant "icegdl" "" ""
 build_variant "rpi" "" ""
 build_variant "raw" "" ""
-build_variant "v4l2" "$SW_DECODER_FLAGS -DUSE_GST_AFD" "$SW_DECODER_LIBS" "-Iv4l2 -Iv4l2/svp"
 
 # Build Summary
 echo "=========================================="
