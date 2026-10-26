@@ -46,18 +46,18 @@ jobs:
 
       - name: Configure coverage build
         run: |
-          cmake -S . -B build \
+          cmake -S . -B build-l1 \
             -DCMAKE_BUILD_TYPE=Debug \
             -DENABLE_COVERAGE=ON
 
       - name: Build L1 tests
-        run: cmake --build build --parallel "$(nproc)"
+        run: cmake --build build-l1 --target test_westeros_sink_l1 --parallel "$(nproc)"
 
       - name: Run Westeros sink L1 tests
-        run: ctest --test-dir build -L WesterosSink --output-on-failure
+        run: ctest --test-dir build-l1 -L WesterosSink --output-on-failure
 
       - name: Generate sink coverage report
-        run: cmake --build build --target coverage-westeros-sink --parallel
+        run: cmake --build build-l1 --target coverage-westeros-sink --parallel
 
       - name: Upload L1 coverage artifact
         if: always()
@@ -65,8 +65,8 @@ jobs:
         with:
           name: artifacts-L1-westeros-sink
           path: |
-            build/coverage_html_westeros_sink/
-            build/coverage_westeros_sink_filtered.info
-            build/Testing/Temporary/LastTest.log
+            build-l1/coverage_html_westeros_sink/
+            build-l1/coverage_westeros_sink_filtered.info
+            build-l1/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
           retention-days: 30

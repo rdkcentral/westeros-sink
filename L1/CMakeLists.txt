@@ -58,8 +58,21 @@ target_link_libraries(test_westeros_sink_l1 PRIVATE
 )
 
 if(ENABLE_COVERAGE)
-    target_compile_options(test_westeros_sink_l1 PRIVATE -O0 -g --coverage)
+    # Only the production sink is measured; do not instrument GTest or mocks.
+    set_source_files_properties("${WESTEROS_SINK_ROOT}/westeros-sink.c"
+        PROPERTIES COMPILE_OPTIONS "-O0;-g;--coverage")
     target_link_options(test_westeros_sink_l1 PRIVATE --coverage)
+
+    set(SINK_COVERAGE_OBJECT_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/test_westeros_sink_l1.dir")
+    # Clear this target's counters, including stale counters from older builds
+    # that instrumented the C++ tests. Never remove other targets' coverage.
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/reset_sink_coverage.cmake" [=[
+file(GLOB_RECURSE counters "${COVERAGE_DIRECTORY}/*.gcda")
+if(counters)
+    file(REMOVE ${counters})
+endif()
+]=])
 
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/check_coverage_westeros_sink.cmake" [=[
 if(NOT DEFINED COVERAGE_INFO OR NOT EXISTS "${COVERAGE_INFO}")
@@ -93,16 +106,17 @@ endif()
 ]=])
 
     add_custom_target(coverage-westeros-sink
+        COMMAND "${CMAKE_COMMAND}"
+            "-DCOVERAGE_DIRECTORY=${SINK_COVERAGE_OBJECT_DIR}"
+            -P "${CMAKE_CURRENT_BINARY_DIR}/reset_sink_coverage.cmake"
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -L WesterosSink
         COMMAND "${LCOV_EXECUTABLE}" --capture
-                --directory "${CMAKE_BINARY_DIR}"
-                --ignore-errors inconsistent
-                --no-external
+                --directory "${SINK_COVERAGE_OBJECT_DIR}"
+                --include "*/westeros-sink.c"
             --output-file "${CMAKE_BINARY_DIR}/coverage_westeros_sink.info"
         COMMAND "${LCOV_EXECUTABLE}" --extract
                 "${CMAKE_BINARY_DIR}/coverage_westeros_sink.info"
                 "*/westeros-sink.c"
-                --ignore-errors inconsistent
             --output-file "${CMAKE_BINARY_DIR}/coverage_westeros_sink_filtered.info"
         COMMAND "${CMAKE_COMMAND}"
             "-DCOVERAGE_INFO=${CMAKE_BINARY_DIR}/coverage_westeros_sink_filtered.info"
@@ -113,7 +127,6 @@ endif()
             --title "Westeros Sink L1 Coverage" --legend --branch-coverage
         COMMAND "${LCOV_EXECUTABLE}" --summary
                 "${CMAKE_BINARY_DIR}/coverage_westeros_sink_filtered.info"
-                --ignore-errors inconsistent
         DEPENDS test_westeros_sink_l1
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
         COMMENT "Running Westeros sink L1 tests and reporting westeros-sink.c coverage"
