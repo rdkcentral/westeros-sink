@@ -127,7 +127,8 @@ enum
   #endif
   ,
   PROP_STATS,
-  PROP_METRICS_SOURCE_ID
+   PROP_METRICS_SOURCE_ID,
+   PROP_METRICS_SESSION_ID
 };
 
 /* metric_type values of the "media-pipeline-metric" bus message */
@@ -352,6 +353,11 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
                         0, G_MAXUINT, 0, G_PARAM_READWRITE));
 
    gstelement_class= GST_ELEMENT_CLASS(klass);
+       g_object_class_install_property (gobject_class, PROP_METRICS_SESSION_ID,
+          g_param_spec_uint ("metrics-session-id",
+                                       "metrics session id",
+                                       "session_id reported in media-pipeline-metric bus messages",
+                                       0, G_MAXUINT, 0, G_PARAM_READWRITE));
    g_signals[SIGNAL_FIRSTFRAME]= g_signal_new( "first-video-frame-callback",
                                                G_TYPE_FROM_CLASS(gstelement_class),
                                                (GSignalFlags) (G_SIGNAL_RUN_LAST),
@@ -883,6 +889,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevNumDecoded= 0;
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.metricSourceId= 0;
+   sink->soc.metricSessionId= 0;
    sink->soc.metricRendered= 0;
    sink->soc.metricDropped= 0;
    sink->soc.metricCorrupted= 0;
@@ -1276,6 +1283,9 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             break;
          }
       #endif
+      case PROP_METRICS_SESSION_ID:
+         sink->soc.metricSessionId= g_value_get_uint(value);
+         break;
       default:
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
          break;
@@ -1395,6 +1405,9 @@ void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *
          break;
       case PROP_METRICS_SOURCE_ID:
          g_value_set_uint(value, sink->soc.metricSourceId);
+         break;
+      case PROP_METRICS_SESSION_ID:
+         g_value_set_uint(value, sink->soc.metricSessionId);
          break;
       default:
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -2478,6 +2491,7 @@ static void postMetricMessage( GstWesterosSink *sink, guint metricType, guint64 
    GstStructure *s= gst_structure_new( "media-pipeline-metric",
                                        "metric_type", G_TYPE_UINT, metricType,
                                        "source_id", G_TYPE_UINT, sink->soc.metricSourceId,
+                                       "session_id", G_TYPE_UINT, sink->soc.metricSessionId,
                                        "rendered_frames", G_TYPE_UINT64, sink->soc.metricRendered,
                                        "dropped_frames", G_TYPE_UINT64, sink->soc.metricDropped,
                                        "corrupted_frames", G_TYPE_UINT64, sink->soc.metricCorrupted,

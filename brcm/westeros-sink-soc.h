@@ -107,6 +107,7 @@ struct _GstWesterosSinkSoc
    guint prevNumDecoded;
    guint prevNumDecodeErrors;
    guint metricSourceId;
+   guint metricSessionId;
    guint64 metricRendered;
    guint64 metricDropped;
    guint64 metricCorrupted;
