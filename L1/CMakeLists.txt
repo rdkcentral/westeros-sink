@@ -58,8 +58,18 @@ target_link_libraries(test_westeros_sink_l1 PRIVATE
 )
 
 if(ENABLE_COVERAGE)
-    target_compile_options(test_westeros_sink_l1 PRIVATE -O0 -g --coverage)
+    set_source_files_properties(
+        "${WESTEROS_SINK_ROOT}/westeros-sink.c"
+        PROPERTIES COMPILE_OPTIONS "-O0;-g;--coverage"
+    )
     target_link_options(test_westeros_sink_l1 PRIVATE --coverage)
+
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/reset_coverage_data.cmake" [=[
+file(GLOB_RECURSE coverage_data_files "${COVERAGE_DIRECTORY}/*.gcda")
+if(coverage_data_files)
+    file(REMOVE ${coverage_data_files})
+endif()
+]=])
 
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/check_coverage_westeros_sink.cmake" [=[
 if(NOT DEFINED COVERAGE_INFO OR NOT EXISTS "${COVERAGE_INFO}")
@@ -93,6 +103,9 @@ endif()
 ]=])
 
     add_custom_target(coverage-westeros-sink
+        COMMAND "${CMAKE_COMMAND}"
+            "-DCOVERAGE_DIRECTORY=${CMAKE_BINARY_DIR}"
+            -P "${CMAKE_CURRENT_BINARY_DIR}/reset_coverage_data.cmake"
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -L WesterosSink
         COMMAND "${LCOV_EXECUTABLE}" --capture
                 --directory "${CMAKE_BINARY_DIR}"
