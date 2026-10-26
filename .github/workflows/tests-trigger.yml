@@ -1,0 +1,24 @@
+name: tests-trigger
+
+on:
+  workflow_call:
+    inputs:
+      caller_source:
+        description: "Specifies the source type for this workflow."
+        required: true
+        type: string
+  push:
+    branches: [main, develop, 'sprint/**', 'release/**']
+  pull_request:
+    branches: [main, develop, 'sprint/**', 'release/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  l1-tests:
+    name: L1 tests (Westeros sink)
+    uses: ./.github/workflows/L1-tests.yml
+    with:
+      caller_source: local

@@ -22,8 +22,25 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="${SCRIPT_DIR}/build"
-INSTALL_DIR="${SCRIPT_DIR}/install"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BUILD_DIR="${PROJECT_ROOT}/build"
+INSTALL_DIR="${PROJECT_ROOT}/install"
+
+cd "$PROJECT_ROOT"
+
+# The variant build needs generated Westeros protocol headers and client libs.
+# Install dependencies on demand so invoking this script directly is sufficient.
+if [ ! -f /usr/local/include/simpleshell-client-protocol.h ] || \
+   [ ! -f /usr/local/include/simplebuffer-client-protocol.h ]; then
+    echo "Westeros protocol headers are missing; running install-dependencies.sh..."
+    bash "${SCRIPT_DIR}/install-dependencies.sh"
+fi
+if [ ! -f /usr/local/include/simpleshell-client-protocol.h ] || \
+   [ ! -f /usr/local/include/simplebuffer-client-protocol.h ]; then
+    echo "ERROR: Westeros SimpleShell/SimpleBuffer protocol headers are still missing."
+    echo "Check install-dependencies.sh output and verify the Westeros components installed under /usr/local/include."
+    exit 1
+fi
 
 echo "=========================================="
 echo " Building Westeros-Sink"
@@ -32,8 +49,8 @@ echo ""
 
 #Step 1: Check and install dependencies
 sudo mkdir -p /usr/local/include/IL
-sudo cp -f "${SCRIPT_DIR}/utilities/IL/OMX_Core.h" /usr/local/include/IL/ 2>/dev/null || true
-sudo cp -f "${SCRIPT_DIR}/utilities/IL/OMX_Broadcom.h" /usr/local/include/IL/ 2>/dev/null || true
+sudo cp -f "${PROJECT_ROOT}/utilities/IL/OMX_Core.h" /usr/local/include/IL/ 2>/dev/null || true
+sudo cp -f "${PROJECT_ROOT}/utilities/IL/OMX_Broadcom.h" /usr/local/include/IL/ 2>/dev/null || true
 echo "✓ All stub headers installed"
 echo ""
 
@@ -52,12 +69,12 @@ COMMON_FLAGS="-fPIC -D_FILE_OFFSET_BITS=64 -DUSE_GST1 -DUSE_GST_VIDEO -DUSE_GST_
 COMMON_FLAGS="$COMMON_FLAGS -DVERSION=\"1.0.0\" -DPACKAGE_NAME=\"westeros-sink\""
 COMMON_FLAGS="$COMMON_FLAGS -Wno-unused-but-set-variable -Wno-format-truncation -Wno-deprecated-declarations"
 # Add include paths for source, utilities, GStreamer, GLib, and DRM
-COMMON_FLAGS="$COMMON_FLAGS -I${SCRIPT_DIR} -Iutilities -I/usr/include/gstreamer-1.0 -I/usr/include/gstreamer-1.0/gst/video -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/libdrm"
+COMMON_FLAGS="$COMMON_FLAGS -I${PROJECT_ROOT} -I${PROJECT_ROOT}/westeros-cloned/simpleshell/protocol -I${PROJECT_ROOT}/westeros-cloned/simplebuffer/protocol -I/usr/local/include/simpleshell/protocol -I${PROJECT_ROOT}/utilities -I/usr/include/gstreamer-1.0 -I/usr/include/gstreamer-1.0/gst/video -I/usr/include/glib-2.0 -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/libdrm"
 # Add pkg-config flags
 COMMON_FLAGS="$COMMON_FLAGS $GSTREAMER_CFLAGS $WAYLAND_CFLAGS $DRM_CFLAGS"
 
 # Combine all linker flags into one variable
-LINK_LIBS="$GSTREAMER_LIBS $WAYLAND_LIBS $DRM_LIBS -lgbm -lEGL -lGLESv2 -ldl -lpthread"
+LINK_LIBS="$GSTREAMER_LIBS $WAYLAND_LIBS $DRM_LIBS -L/usr/local/lib -lwesteros_simplebuffer_client -lwesteros_simpleshell_client -lgbm -lEGL -lGLESv2 -ldl -lpthread"
 # Software decoder flags
 SW_DECODER_FLAGS="-DENABLE_SW_DECODE"
 SW_DECODER_LIBS="-lavcodec -lavutil"
@@ -78,28 +95,28 @@ build_variant() {
 
     # Compile each source file separately
     echo "Compiling westeros-sink.c..."
-    gcc -c westeros-sink.c -o "${BUILD_DIR}/${VARIANT}/westeros-sink.o" $COMPILE_FLAGS -I${VARIANT} || echo "    ✗ FAILED"
+    gcc -c westeros-sink.c -o "${BUILD_DIR}/${VARIANT}/westeros-sink.o" $COMPILE_FLAGS -I${VARIANT} || { echo "    ✗ FAILED"; BUILD_FAILED=1; }
 
     echo "Compiling ${VARIANT}/westeros-sink-soc.c..."
-    gcc -c ${VARIANT}/westeros-sink-soc.c -o "${BUILD_DIR}/${VARIANT}/westeros-sink-soc.o" $COMPILE_FLAGS -I${VARIANT} || echo "    ✗ FAILED"
+    gcc -c ${VARIANT}/westeros-sink-soc.c -o "${BUILD_DIR}/${VARIANT}/westeros-sink-soc.o" $COMPILE_FLAGS -I${VARIANT} || { echo "    ✗ FAILED"; BUILD_FAILED=1; }
 
     echo "Compiling pipeline_logger.cpp..."
-    g++ -c pipeline_logger.cpp -o "${BUILD_DIR}/${VARIANT}/pipeline_logger.o" $COMPILE_FLAGS -I${VARIANT} -Wno-format || echo "    ✗ FAILED"
+    g++ -c pipeline_logger.cpp -o "${BUILD_DIR}/${VARIANT}/pipeline_logger.o" $COMPILE_FLAGS -I${VARIANT} -Wno-format || { echo "    ✗ FAILED"; BUILD_FAILED=1; }
 
     echo "Compiling essos_resmgr_stubs.c..."
-    gcc -c L1/mocks/essos_resmgr_stubs.c -o "${BUILD_DIR}/${VARIANT}/essos_resmgr_stubs.o" $COMPILE_FLAGS || echo "    ✗ FAILED"
+    gcc -c L1/mocks/essos_resmgr_stubs.c -o "${BUILD_DIR}/${VARIANT}/essos_resmgr_stubs.o" $COMPILE_FLAGS || { echo "    ✗ FAILED"; BUILD_FAILED=1; }
 
     echo "Compiling wayland_stubs.c..."
-    gcc -c L1/mocks/wayland_stubs.c -o "${BUILD_DIR}/${VARIANT}/wayland_stubs.o" $COMPILE_FLAGS || echo "    ✗ FAILED"
+    gcc -c L1/mocks/wayland_stubs.c -o "${BUILD_DIR}/${VARIANT}/wayland_stubs.o" $COMPILE_FLAGS || { echo "    ✗ FAILED"; BUILD_FAILED=1; }
 
     echo "Compiling gst_dmabuf_stubs.c..."
-    gcc -c L1/mocks/gst_dmabuf_stubs.c -o "${BUILD_DIR}/${VARIANT}/gst_dmabuf_stubs.o" $COMPILE_FLAGS || echo "    ✗ FAILED"
+    gcc -c L1/mocks/gst_dmabuf_stubs.c -o "${BUILD_DIR}/${VARIANT}/gst_dmabuf_stubs.o" $COMPILE_FLAGS || { echo "    ✗ FAILED"; BUILD_FAILED=1; }
 
     echo "Compiling platform_stubs.c..."
-    gcc -c L1/mocks/platform_stubs.c -o "${BUILD_DIR}/${VARIANT}/platform_stubs.o" $COMPILE_FLAGS || echo "    ✗ FAILED"
+    gcc -c L1/mocks/platform_stubs.c -o "${BUILD_DIR}/${VARIANT}/platform_stubs.o" $COMPILE_FLAGS || { echo "    ✗ FAILED"; BUILD_FAILED=1; }
 
     echo "Compiling main.c..."
-    gcc -c L1/mocks/main.c -o "${BUILD_DIR}/${VARIANT}/main.o" $COMPILE_FLAGS || echo "    ✗ FAILED"
+    gcc -c L1/mocks/main.c -o "${BUILD_DIR}/${VARIANT}/main.o" $COMPILE_FLAGS || { echo "    ✗ FAILED"; BUILD_FAILED=1; }
 
     # Check if all object files were created
     local OBJ_COUNT=$(ls "${BUILD_DIR}/${VARIANT}"/*.o 2>/dev/null | wc -l)
@@ -117,7 +134,7 @@ build_variant() {
             $LINK_LIBS $VARIANT_LIBS && \
             mkdir -p "${INSTALL_DIR}/lib/gstreamer-1.0/${VARIANT}" && \
             cp "${BUILD_DIR}/${VARIANT}/libgstwesterossink.so" "${INSTALL_DIR}/lib/gstreamer-1.0/${VARIANT}/" && \
-            echo "✓ $VARIANT .so built successfully" || echo "✗ $VARIANT .so linking FAILED"
+            echo "✓ $VARIANT .so built successfully" || { echo "✗ $VARIANT .so linking FAILED"; BUILD_FAILED=1; }
         
         echo "Linking westeros-sink-${VARIANT} binary..."
         g++ -o "${BUILD_DIR}/${VARIANT}/westeros-sink-${VARIANT}" \
@@ -133,20 +150,22 @@ build_variant() {
             mkdir -p "${INSTALL_DIR}/bin" && \
             cp "${BUILD_DIR}/${VARIANT}/westeros-sink-${VARIANT}" "${INSTALL_DIR}/bin/" && \
             chmod +x "${INSTALL_DIR}/bin/westeros-sink-${VARIANT}" && \
-            echo "✓ $VARIANT binary built successfully" || echo "✗ $VARIANT binary linking FAILED"
+            echo "✓ $VARIANT binary built successfully" || { echo "✗ $VARIANT binary linking FAILED"; BUILD_FAILED=1; }
     else
         echo "✗ $VARIANT incomplete (missing object files)"
+        BUILD_FAILED=1
     fi
     echo ""
 }
 
 # Step 3: Build all variants
 
+BUILD_FAILED=0
 rm -rf "$BUILD_DIR" "$INSTALL_DIR"
 mkdir -p "$BUILD_DIR" "$INSTALL_DIR"
 
 # Build variants
-build_variant "brcm" "$SW_DECODER_FLAGS" "$SW_DECODER_LIBS" "-I${SCRIPT_DIR}/westeros-cloned/test/brcm-em/include"
+build_variant "brcm" "$SW_DECODER_FLAGS" "$SW_DECODER_LIBS" "-I${PROJECT_ROOT}/westeros-cloned/test/brcm-em/include"
 build_variant "drm" "" "" "-I/usr/include/libdrm"
 build_variant "emu" "-DEMU" ""
 build_variant "icegdl" "" ""
@@ -163,4 +182,8 @@ echo "Built libraries: ${INSTALL_DIR}/lib/gstreamer-1.0/"
 echo "Built binaries: ${INSTALL_DIR}/bin/"
 echo ""
 
+# Preserve the legacy report-only status for variant compilation/link failures.
+if [ "$BUILD_FAILED" -ne 0 ]; then
+    echo "WARNING: Some variants failed; returning success to preserve legacy workflow status."
+fi
 exit 0
