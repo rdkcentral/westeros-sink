@@ -36,16 +36,16 @@ jobs:
 
       - name: Make scripts executable
         run: |
-          chmod +x ./install-dependencies.sh
-          chmod +x ./build.sh
+          chmod +x ./scripts/install-dependencies.sh
+          chmod +x ./scripts/build.sh
 
       - name: Install dependencies
         env:
           GITHUB_TOKEN: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
-        run: bash ./install-dependencies.sh
+        run: bash ./scripts/install-dependencies.sh
 
       - name: Build westeros-sink variants
-        run: bash ./build.sh
+        run: bash ./scripts/build.sh
 
       - name: Verify build artifacts
         run: |
