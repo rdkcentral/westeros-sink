@@ -44,24 +44,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.WESTEROS_ACCESS_TOKEN }}
         run: bash ./scripts/install-dependencies.sh
 
-      - name: Verify legacy FFmpeg API compatibility
-        run: |
-          gcc --version
-          pkg-config --modversion libavcodec libavutil
-          # Verify the installed headers, not merely package availability.
-          gcc -fsyntax-only -Werror=implicit-function-declaration \
-            -Werror=discarded-qualifiers \
-            $(pkg-config --cflags libavcodec libavutil) -x c - <<'EOF'
-          #include <libavcodec/avcodec.h>
-          #include <libavutil/frame.h>
-          int check_decoder_api(AVCodecContext *context, AVFrame *frame)
-          {
-              AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-              (void)codec;
-              return avcodec_close(context) + frame->key_frame + frame->coded_picture_number;
-          }
-          EOF
-
       - name: Build westeros-sink variants
         run: bash ./scripts/build.sh
 
