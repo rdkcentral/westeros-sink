@@ -115,6 +115,15 @@ struct _GstWesterosSinkSoc
    guint metricPrevDrops;
    guint metricPrevRepeats;
    guint metricPrevErrors;
+   gboolean metricFreezeActive;
+   guint metricFreezePts;
+   guint64 metricFreezeStartNs;
+   guint64 metricFreezeCount;
+   gboolean metricUnderflowPending;
+   gboolean metricUnderflowActive;
+   guint metricUnderflowPts;
+   guint64 metricUnderflowStartNs;
+   guint64 metricUnderflowBytes;
    gboolean captureEnabled;
    gboolean videoPlaying;
    int framesBeforeHideVideo;
