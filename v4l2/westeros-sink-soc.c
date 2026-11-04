@@ -94,7 +94,8 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
 #define INT_FRAME(FORMAT, ...)      frameLog( "FRAME: " FORMAT "\n", __VA_ARGS__)
 #define FRAME(...)                  INT_FRAME(__VA_ARGS__, "")
 
-#define postDecodeError( sink, description ) \
+#define MAX_DECODER_RETRIES 3
+#define postDecodeErrorAndExit( sink, description ) \
                                 { \
                                    GThread *temp= sink->soc.videoOutputThread; \
                                    postErrorMessage( (sink), GST_STREAM_ERROR_DECODE, "video decode error", description); \
@@ -988,6 +989,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.frameInCount= 0;
    sink->soc.frameOutCount= 0;
    sink->soc.videoDecodeStartTime= 0;
+   sink->soc.decoderRetryCount=0;
    sink->soc.frameDecodeCount= 0;
    sink->soc.frameDisplayCount= 0;
    sink->soc.expectNoLastFrame= FALSE;
@@ -7077,7 +7079,7 @@ capture_start:
          if ( !sink->soc.quitVideoOutputThread )
          {
             GST_ERROR("wstVideoOutputThread: v4l2Fd %d outBuffers %p", sink->soc.v4l2Fd, sink->soc.outBuffers);
-            postDecodeError( sink, "no dev/no outBuffers" );
+            postDecodeErrorAndExit( sink, "no dev/no outBuffers" );
          }
          goto exit;
       }
@@ -7095,7 +7097,7 @@ capture_start:
          {
             GST_ERROR("wstVideoOutputThread: failed to queue output buffer: rc %d errno %d", rc, errno);
             UNLOCK(sink);
-            postDecodeError( sink, "output enqueue error" );
+            postDecodeErrorAndExit( sink, "output enqueue error" );
             goto exit;
          }
          ++sink->soc.outQueuedCount;
@@ -7108,7 +7110,7 @@ capture_start:
       {
          UNLOCK(sink);
          GST_ERROR("streamon failed for output: fd %d, rc %d errno %d", sink->soc.v4l2Fd, rc, errno );
-         postDecodeError( sink, "STREAMON failure" );
+         postDecodeErrorAndExit( sink, "STREAMON failure" );
          goto exit;
       }
 
@@ -7387,9 +7389,26 @@ capture_start:
                   GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
-                     sink->soc.decodeError= TRUE;
-                     postDecodeError( sink, "no output from decoder" );
-                     goto exit;
+		     if (sink->soc.decoderRetryCount < MAX_DECODER_RETRIES)
+      		    {
+         		sink->soc.decoderRetryCount++;
+			GST_ERROR("No decoder output detected. "
+                     "Performing decoder reset (%d/%d)",
+                     sink->soc.decoderRetryCount,
+                     MAX_DECODER_RETRIES);
+			wstDecoderReset(sink, false);
+			wstSetupInput( sink );
+			GST_ERROR("Going to et new video decode start time\n");
+			         /* Start a fresh monitoring window */
+		         sink->soc.videoDecodeStartTime = g_get_monotonic_time();
+        		 sink->soc.frameInCount = 0;
+		    }
+		    else{
+			GST_ERROR("decoder retry exceeded\n");
+                     	sink->soc.decodeError= TRUE;
+                        postDecodeErrorAndExit( sink, "no output from decoder" );
+                        goto exit;
+		    }
                   }
                }
                usleep( 1000 );
