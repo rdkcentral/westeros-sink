@@ -1763,6 +1763,13 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       sink->soc.lastRenderPts= GST_BUFFER_PTS(buffer);
    }
 
+   if ( GST_BUFFER_PTS_IS_VALID(buffer) )
+   {
+      GST_INFO("render-buffer: pts %ums lastRenderPts %ums",
+               (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)),
+               (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
+   }
+   
    if ( sink->soc.chkBufToStartPts && sink->soc.lastStartPts45k && GST_BUFFER_PTS_IS_VALID(buffer) )
    {
       guint bufferPtsMs= GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer));
@@ -2490,8 +2497,20 @@ static gpointer captureThread(gpointer data)
          {
             GST_ERROR("Error NEXUS_SimpleVideoDecoder_GetStatus: %d", (int)rc);
          }
-
-         g_signal_emit (G_OBJECT(sink), g_signals[SIGNAL_UNDERFLOW], 0, videoStatus.fifoDepth, videoStatus.queueDepth);
+ if ( NEXUS_SUCCESS == rc )
+         {
+            GST_INFO("underflow-status: pts 0x%x %ums bytesDecoded %"G_GUINT64_FORMAT
+                     " decoded %u displayed %u fifoDepth %u queueDepth %u"
+                     " decodeDrops %u displayDrops %u displayUnderflows %u"
+                     " lastRenderPts %ums",
+                     videoStatus.pts, videoStatus.pts/45, videoStatus.numBytesDecoded,
+                     videoStatus.numDecoded, videoStatus.numDisplayed, videoStatus.fifoDepth,
+                     videoStatus.queueDepth, videoStatus.numDecodeDrops, videoStatus.numDisplayDrops,
+                     videoStatus.numDisplayUnderflows,
+                     (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
+         }
+         
+	 g_signal_emit (G_OBJECT(sink), g_signals[SIGNAL_UNDERFLOW], 0, videoStatus.fifoDepth, videoStatus.queueDepth);
 
          GstPad *pad= gst_pad_get_peer( sink->peerPad );
          if ( pad )
@@ -3363,12 +3382,17 @@ static void underflowCallback( void *userData, int n )
       {
          if ( !sink->soc.useImmediateOutput )
          {
-            GST_INFO("underflow: EOS: %d qDepth %d presStarted %d ignoreDisc %d bytesDecoded %"G_GUINT64_FORMAT" PTS 0x%x %ums positionSegmentStart %ums lastRenderPts %ums",
+		  GST_INFO("underflow: EOS: %d qDepth %d presStarted %d ignoreDisc %d bytesDecoded %"G_GUINT64_FORMAT""
+                     " decoded %u displayed %u fifoDepth %u decodeDrops %u displayDrops %u displayUnderflows %u"
+                     " PTS 0x%x %ums positionSegmentStart %ums lastRenderPts %ums",
                      sink->eosEventSeen, videoStatus.queueDepth, sink->soc.presentationStarted, sink->soc.ignoreDiscontinuity,
-                     videoStatus.numBytesDecoded, videoStatus.pts, videoStatus.pts/45, (guint)GST_TIME_AS_MSECONDS(sink->positionSegmentStart), (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
-         }
+                     videoStatus.numBytesDecoded, videoStatus.numDecoded, videoStatus.numDisplayed, videoStatus.fifoDepth,
+                     videoStatus.numDecodeDrops, videoStatus.numDisplayDrops, videoStatus.numDisplayUnderflows,
+                     videoStatus.pts, videoStatus.pts/45, (guint)GST_TIME_AS_MSECONDS(sink->positionSegmentStart),
+                     (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
+	 }
          LOCK(sink);
-         if ( sink->eosEventSeen )
+	 if ( sink->eosEventSeen )
          {
             if (sink->positionSegmentStart && GST_TIME_AS_MSECONDS(sink->positionSegmentStart) >= videoStatus.pts/45 && !videoStatus.numDisplayUnderflows)
             {
