@@ -7396,8 +7396,8 @@ capture_start:
                      "Performing decoder reset (%d/%d)",
                      sink->soc.decoderRetryCount,
                      MAX_DECODER_RETRIES);
-			wstDecoderReset(sink, false);
-			wstSetupInput( sink );
+			//wstDecoderReset(sink, false);
+			//wstSetupInput( sink );
 			GST_ERROR("Going to et new video decode start time\n");
 			         /* Start a fresh monitoring window */
 		         sink->soc.videoDecodeStartTime = g_get_monotonic_time();
@@ -7405,6 +7405,7 @@ capture_start:
 		    }
 		    else{
 			GST_ERROR("decoder retry exceeded\n");
+				sink->soc.decoderRetryCount=0;
                      	sink->soc.decodeError= TRUE;
                         postDecodeErrorAndExit( sink, "no output from decoder" );
                         goto exit;
