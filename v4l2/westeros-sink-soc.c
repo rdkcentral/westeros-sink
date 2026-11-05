@@ -1639,7 +1639,7 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
    LOCK( sink );
    sink->soc.videoPlaying= TRUE;
    sink->soc.videoPaused= FALSE;
-   GST_DEBUG("videoPaused value in gst_westeros_sink_soc_paused_to_playing:%d\n",sink->soc.videoPaused);
+   GST_DEBUG("videoPaused value in gst_westeros_sink_soc_paused_to_playing:%d",sink->soc.videoPaused);
    #ifdef USE_AMLOGIC_MESON_MSYNC
    if ( !sink->soc.userSession )
    #endif
@@ -2218,6 +2218,8 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 
 void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 {
+   GST_DEBUG("7468 --> Resetting the frameInCount value\n");
+   sink->soc.frameInCount= 0;
    if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
    {
    #ifdef ENABLE_SW_DECODE
@@ -2635,8 +2637,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    gboolean result= FALSE;
    int rc;
 
-   GST_DEBUG("7468 --> Resetting the frameInCount value\n");
-   sink->soc.frameInCount= 0;
+
    sink->soc.frameOutCount= 0;
    sink->soc.frameDecodeCount= 0;
    sink->soc.frameDisplayCount= 0;
@@ -7224,8 +7225,11 @@ capture_start:
       }
       else if ( sink->soc.videoPaused && !sink->soc.frameAdvance )
       {
-	 GST_DEBUG(" 7468--> In else if block in infinite for loop in output thread\n");
          LOCK(sink);
+		  if ( !wasPaused )
+           {
+              GST_DEBUG("wstVideoOutputThread: entering paused loop");
+           }
          wstProcessMessagesVideoClientConnection( sink->soc.conn );
          if ( !wasPaused )
          {
@@ -7407,7 +7411,7 @@ capture_start:
                   float frameDelay= sink->soc.frameInCount / frameRate;
 
 //                  GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
-                 GST_ERROR("7468-->frameRate:%f, frameInCount: %f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, sink->soc.frameInCount, frameDelay, sink->soc.videoDecodeStartTime, now);
+                 GST_ERROR("7468-->frameRate:%f, frameInCount: %d, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, sink->soc.frameInCount, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
                      sink->soc.decodeError= TRUE;
