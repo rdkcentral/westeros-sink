@@ -80,18 +80,18 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
    NEXUS_VideoDecoderStatus videoStatus;  \
    NEXUS_Error log_rc = NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus ); \
    if (log_rc != NEXUS_SUCCESS) { \
-      videoStatus.pts = 0; \
-      videoStatus.numDecoded = 0; \
-      videoStatus.numDisplayed = 0; \
-      videoStatus.queueDepth = 0; \
-      videoStatus.numDecodeErrors = 0; \
+   memset( &videoStatus, 0, sizeof(videoStatus) ); \
    } \
    guint stc=0; \
    if (sink->soc.stcChannel) { \
       NEXUS_SimpleStcChannel_GetStc(sink->soc.stcChannel, &stc); \
    }  \
-   FUNC(""format" decStatus stc 0x%x %ums  pts 0x%x %ums  decoded %u display %u qDepth %u decErr %u inErr %u ",\
-      __VA_ARGS__, stc, stc/45, videoStatus.pts, videoStatus.pts/45, videoStatus.numDecoded, videoStatus.numDisplayed, videoStatus.queueDepth, videoStatus.numDecodeErrors, videoStatus.numDecodeErrors); \
+   FUNC(""format" decStatus stc 0x%x %ums  pts 0x%x %ums  decoded %u display %u qDepth %u decErr %u inErr %u " \
+        "fifoDepth %u fifoSize %u decDrops %u dispDrops %u dispUnderflows %u dispErr %u ptsErr %u ptsStcDiff %d " \
+        "bytesDecoded %"G_GUINT64_FORMAT" fifoEmpty %u fifoNoLongerEmpty %u picTag %lu ",\
+      __VA_ARGS__, stc, stc/45, videoStatus.pts, videoStatus.pts/45, videoStatus.numDecoded, videoStatus.numDisplayed, videoStatus.queueDepth, videoStatus.numDecodeErrors, videoStatus.numDecodeInputErrors, \
+      videoStatus.fifoDepth, videoStatus.fifoSize, videoStatus.numDecodeDrops, videoStatus.numDisplayDrops, videoStatus.numDisplayUnderflows, videoStatus.numDisplayErrors, videoStatus.ptsErrorCount, (int)videoStatus.ptsStcDifference, \
+      (guint64)videoStatus.numBytesDecoded, videoStatus.fifoEmptyEvents, videoStatus.fifoNoLongerEmptyEvents, videoStatus.pictureTag); \
    } \
 } \
 
@@ -1765,7 +1765,22 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 
    if ( GST_BUFFER_PTS_IS_VALID(buffer) )
    {
-      GST_INFO("render-buffer: pts %ums lastRenderPts %ums",
+      if ( GST_BUFFER_DTS_IS_VALID(buffer) )
+      {
+         GST_INFO("input-buffer: pts %ums dts %ums duration %ums offset %"G_GUINT64_FORMAT,
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)),
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_DTS(buffer)),
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_DURATION(buffer)),
+                  GST_BUFFER_OFFSET(buffer));
+      }
+      else
+      {
+         GST_INFO("input-buffer: pts %ums dts INVALID duration %ums offset %"G_GUINT64_FORMAT,
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)),
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_DURATION(buffer)),
+                  GST_BUFFER_OFFSET(buffer));
+      }
+	   GST_INFO("render-buffer: pts %ums lastRenderPts %ums",
                (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)),
                (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
    }
@@ -2509,7 +2524,9 @@ static gpointer captureThread(gpointer data)
                      videoStatus.numDisplayUnderflows,
                      (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
          }
-         
+                  /* Full decoder state when the underflow is actually emitted upstream (SERXIONE-9167) */
+         LOG_VIDEODECODER_STATUS(GST_INFO, "captureThread: emitting underflow lastRenderPts %ums", (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
+
 	 g_signal_emit (G_OBJECT(sink), g_signals[SIGNAL_UNDERFLOW], 0, videoStatus.fifoDepth, videoStatus.queueDepth);
 
          GstPad *pad= gst_pad_get_peer( sink->peerPad );
@@ -2522,8 +2539,21 @@ static gpointer captureThread(gpointer data)
                                           NULL );
             if ( structure )
             {
-               gst_pad_push_event( pad, gst_event_new_custom(GST_EVENT_CUSTOM_UPSTREAM, structure));
-            }
+                 GstEvent *event= gst_event_new_custom(GST_EVENT_CUSTOM_UPSTREAM, structure);
+               if ( event )
+               {
+                  gboolean pushed;
+
+                  GST_INFO("video_buffer_underflow: pushing decoder_pts 0x%x %ums"
+                           " fifoDepth %u queueDepth %u pad %s",
+                           videoStatus.pts, videoStatus.pts/45,
+                           videoStatus.fifoDepth, videoStatus.queueDepth,
+                           GST_OBJECT_NAME(pad));
+                  pushed= gst_pad_push_event( pad, event );
+                  GST_INFO("video_buffer_underflow: decoder_pts 0x%x %ums push_result %d",
+                           videoStatus.pts, videoStatus.pts/45, pushed);
+               }
+	    }
             gst_object_unref( pad );
          }
       }
@@ -2801,11 +2831,12 @@ static void processTextureWayland( GstWesterosSink *sink, NEXUS_SurfaceHandle su
 
 static void processFrame( GstWesterosSink *sink )
 {
-   NEXUS_SimpleVideoDecoderCaptureStatus captureStatus;
+   NEXUS_SimpleVideoDecoderCaptureStatus captureStatus = { 0 };
    gboolean haveResources= FALSE;
    NEXUS_SurfaceHandle captureSurface= NULL;
    unsigned numReturned= 0;
-
+   NEXUS_Error captureRc= NEXUS_SUCCESS;
+   NEXUS_Error recycleRc= NEXUS_SUCCESS;
    GST_LOG("processFrame: enter");
 
    if ( (sink->soc.captureWidth == -1) || (sink->soc.captureHeight == -1) )
@@ -2824,6 +2855,13 @@ static void processFrame( GstWesterosSink *sink )
       if (sink->soc.videoDecoder)
       {
          NEXUS_SimpleVideoDecoder_GetCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, &captureStatus, 1, &numReturned);
+         captureRc= NEXUS_SimpleVideoDecoder_GetCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, &captureStatus, 1, &numReturned);
+	if ( captureRc != NEXUS_SUCCESS || numReturned > 0 )
+	{
+	GST_DEBUG("CAPTURE_STATUS rc %d returned %u surface %p pts %u (%ums) ptsValid %d serial %u",
+		  (int)captureRc, numReturned, (void*)captureSurface, captureStatus.pts,
+		  captureStatus.pts/45, captureStatus.ptsValid, captureStatus.serialNumber);
+	}
       }
       else
       {
@@ -2833,9 +2871,9 @@ static void processFrame( GstWesterosSink *sink )
       {
          long long now= getCurrentTimeMillis();
          long long elapsed= now-sink->soc.startTime;
-         GST_LOG("%lld.%03lld: cap surf %p: frame %d pts %u (%d) serial %u iter %d",
-                 elapsed/1000LL, elapsed%1000LL, (void*)captureSurface, sink->soc.frameCount,
-                 captureStatus.pts, captureStatus.ptsValid, captureStatus.serialNumber, sink->soc.captureCount );
+         GST_LOG("%lld.%03lld: CAPTURED_FRAME surf %p frame %d pts %u (%ums) ptsValid %d serial %u iter %d",        
+	 elapsed/1000LL, elapsed%1000LL, (void*)captureSurface, sink->soc.frameCount,
+         captureStatus.pts, captureStatus.pts/45, captureStatus.ptsValid, captureStatus.serialNumber, sink->soc.captureCount );
 
          if ( sink->soc.enableTextureSignal )
          {
@@ -2864,7 +2902,13 @@ static void processFrame( GstWesterosSink *sink )
          }
          if ( captureSurface )
          {
-            NEXUS_SimpleVideoDecoder_RecycleCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, 1);
+       	    recycleRc= NEXUS_SimpleVideoDecoder_RecycleCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, 1);
+            if ( recycleRc != NEXUS_SUCCESS )
+            {
+               GST_WARNING("CAPTURE_RECYCLE_FAILED rc %d surface %p pts %u serial %u",
+                           (int)recycleRc, (void*)captureSurface,
+                           captureStatus.pts, captureStatus.serialNumber);
+            } 
          }
       }
    }
@@ -3377,6 +3421,8 @@ static void underflowCallback( void *userData, int n )
 
    if ( sink->videoStarted )
    {
+      /* Full decoder state at the moment Nexus signals fifoEmpty (SERXIONE-9167) */
+      LOG_VIDEODECODER_STATUS(GST_INFO, "underflowCallback: fifoEmpty event lastRenderPts %ums", (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
       rc= NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus);
       if ( NEXUS_SUCCESS == rc )
       {
