@@ -1765,7 +1765,22 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 
    if ( GST_BUFFER_PTS_IS_VALID(buffer) )
    {
-      GST_INFO("render-buffer: pts %ums lastRenderPts %ums",
+      if ( GST_BUFFER_DTS_IS_VALID(buffer) )
+      {
+         GST_INFO("input-buffer: pts %ums dts %ums duration %ums offset %"G_GUINT64_FORMAT,
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)),
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_DTS(buffer)),
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_DURATION(buffer)),
+                  GST_BUFFER_OFFSET(buffer));
+      }
+      else
+      {
+         GST_INFO("input-buffer: pts %ums dts INVALID duration %ums offset %"G_GUINT64_FORMAT,
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)),
+                  (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_DURATION(buffer)),
+                  GST_BUFFER_OFFSET(buffer));
+      }
+	   GST_INFO("render-buffer: pts %ums lastRenderPts %ums",
                (guint)GST_TIME_AS_MSECONDS(GST_BUFFER_PTS(buffer)),
                (guint)GST_TIME_AS_MSECONDS(sink->soc.lastRenderPts));
    }
@@ -2522,8 +2537,21 @@ static gpointer captureThread(gpointer data)
                                           NULL );
             if ( structure )
             {
-               gst_pad_push_event( pad, gst_event_new_custom(GST_EVENT_CUSTOM_UPSTREAM, structure));
-            }
+                 GstEvent *event= gst_event_new_custom(GST_EVENT_CUSTOM_UPSTREAM, structure);
+               if ( event )
+               {
+                  gboolean pushed;
+
+                  GST_INFO("video_buffer_underflow: pushing decoder_pts 0x%x %ums"
+                           " fifoDepth %u queueDepth %u pad %s",
+                           videoStatus.pts, videoStatus.pts/45,
+                           videoStatus.fifoDepth, videoStatus.queueDepth,
+                           GST_OBJECT_NAME(pad));
+                  pushed= gst_pad_push_event( pad, event );
+                  GST_INFO("video_buffer_underflow: decoder_pts 0x%x %ums push_result %d",
+                           videoStatus.pts, videoStatus.pts/45, pushed);
+               }
+	    }
             gst_object_unref( pad );
          }
       }
