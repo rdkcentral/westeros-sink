@@ -2210,7 +2210,7 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
 void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 {
    GST_DEBUG("7468 --> Resetting the frameInCount value\n");
-   sink->soc.frameInCount= 0;
+/* frameInCount is reset by flush/start, not per input buffer. */
    if (WST_SINK_MODE_RAW != sink->soc.sinkMode)
    {
    #ifdef ENABLE_SW_DECODE
