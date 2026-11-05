@@ -1651,8 +1651,8 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
    LOCK( sink );
    sink->soc.videoPlaying= FALSE;
    sink->soc.videoPaused= TRUE;
-   UNLOCK( sink );
    GST_DEBUG("videoPaused value in gst_westeros_sink_soc_playing_to_paused:%d\n",sink->soc.videoPaused);
+   UNLOCK( sink );
    if ((sink->soc.sinkMode == WST_SINK_MODE_RAW))
    {
       wstSendPauseVideoClientConnection( sink->soc.conn, true );
