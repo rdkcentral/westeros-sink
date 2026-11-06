@@ -7397,7 +7397,7 @@ capture_start:
 		  			GST_ERROR("decoder retry exceeded or got EOS detected-- retry count:%d",sink->soc.decoderRetryCount);
 					pthread_mutex_lock(&sink->soc.reset_lock);
 					sink->soc.decoderRetryCount=0;
-					pthread_mutex_lock(&sink->soc.reset_lock);
+					pthread_mutex_unlock(&sink->soc.reset_lock);
                     sink->soc.decodeError= TRUE;
                     postDecodeErrorAndExit( sink, "no output from decoder" );
                     goto exit;			
