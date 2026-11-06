@@ -7391,23 +7391,25 @@ capture_start:
                   GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
-		     if (sink->soc.decoderRetryCount < MAX_DECODER_RETRIES)
+		     if (sink->soc.decoderRetryCount >= MAX_DECODER_RETRIES || sink->soc.quitEOSDetectionThread)
       		    {
-			GST_ERROR("No decoder output detected. "
+		  			GST_ERROR("decoder retry exceeded or got EOS detected-- retry count:%d",sink->soc.decoderRetryCount);
+					pthread_mutex_lock(&sink->soc.reset_lock);
+					sink->soc.decoderRetryCount=0;
+					pthread_mutex_lock(&sink->soc.reset_lock);
+                    sink->soc.decodeError= TRUE;
+                    postDecodeErrorAndExit( sink, "no output from decoder" );
+                    goto exit;			
+				}
+		    else{
+				GST_ERROR("No decoder output detected. "
                      "Performing decoder reset (%d/%d)",
                      sink->soc.decoderRetryCount,
                      MAX_DECODER_RETRIES);
-			sink->soc.decoderResetNeeded = true;
-			GST_ERROR("Going to et new video decode start time\n");
-			         /* Start a fresh monitoring window */
-        		// sink->soc.frameInCount = 0;
-		    }
-		    else{
-			GST_ERROR("decoder retry exceeded\n");
-				sink->soc.decoderRetryCount=0;
-                     	sink->soc.decodeError= TRUE;
-                        postDecodeErrorAndExit( sink, "no output from decoder" );
-                        goto exit;
+				pthread_mutex_lock(&sink->soc.reset_lock);
+				sink->soc.decoderResetNeeded = true;
+				pthread_mutex_unlock(&sink->soc.reset_lock);
+				GST_ERROR("Going to et new video decode start time\n");
 		    }
                   }
                }
@@ -7654,6 +7656,7 @@ static gpointer wstEOSDetectionThread(gpointer data)
    bool videoPlaying;
    bool eosEventSeen;
    double frameRate;
+   bool doReset = false;
 
    GST_DEBUG("wstVideoEOSThread: enter");
 
@@ -7674,11 +7677,18 @@ static gpointer wstEOSDetectionThread(gpointer data)
 		  sink->soc.decoderRetryCount++;
 		  if ( sink->videoStarted )
           {
-	          wstDecoderReset(sink,false);
+			  doReset = true;
 		  }
-	      sink->soc.decoderResetNeeded = false;
-		   sink->soc.videoDecodeStartTime = g_get_monotonic_time();
+		  sink->soc.decoderResetNeeded = false;
 		  pthread_mutex_unlock(&sink->soc.reset_lock);
+		  sink->soc.videoDecodeStartTime = g_get_monotonic_time();
+		  if(doReset)
+		  {
+			  GST_ERROR("calling westeros decoder reset");
+			  wstDecoderReset(sink,false);
+			  doReset = false;
+		  }
+
 
       }
 	   
