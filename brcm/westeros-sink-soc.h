@@ -84,6 +84,7 @@ struct _GstWesterosSinkSoc
    int codec;
    gboolean quitCaptureThread;
    GThread *captureThread;
+   GMutex captureStopMutex;
    long long startTime;
    int captureCount;
    int frameCount;
