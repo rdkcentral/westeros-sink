@@ -7392,12 +7392,11 @@ capture_start:
                   GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
-		     if (sink->soc.decoderRetryCount >= MAX_DECODER_RETRIES || sink->soc.quitEOSDetectionThread)
+				pthread_mutex_lock(&sink->soc.reset_lock);
+		         if (sink->soc.decoderRetryCount >= MAX_DECODER_RETRIES || sink->soc.quitEOSDetectionThread)
       		    {
 		  			GST_ERROR("decoder retry exceeded or got EOS detected-- retry count:%d",sink->soc.decoderRetryCount);
-					pthread_mutex_lock(&sink->soc.reset_lock);
 					sink->soc.decoderRetryCount=0;
-					pthread_mutex_unlock(&sink->soc.reset_lock);
                     sink->soc.decodeError= TRUE;
                     postDecodeErrorAndExit( sink, "no output from decoder" );
                     goto exit;			
@@ -7407,11 +7406,11 @@ capture_start:
                      "Performing decoder reset (%d/%d)",
                      sink->soc.decoderRetryCount,
                      MAX_DECODER_RETRIES);
-				pthread_mutex_lock(&sink->soc.reset_lock);
 				sink->soc.decoderResetNeeded = true;
-				pthread_mutex_unlock(&sink->soc.reset_lock);
 				GST_ERROR("Going to et new video decode start time\n");
 		    }
+					  				pthread_mutex_unlock(&sink->soc.reset_lock);
+
                   }
                }
                usleep( 1000 );
