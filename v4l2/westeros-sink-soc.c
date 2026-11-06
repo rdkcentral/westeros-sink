@@ -2607,6 +2607,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.prerollBuffer= 0;
    sink->soc.startedOutOfSegment= FALSE;
    sink->soc.decoderRetryCount=0;
+   sink->soc.decoderResetNeeded=FALSE;
    wstFlushPixelAspectRatio( sink, false );
    #ifdef USE_GST_AFD
    wstFlushAFDInfo( sink, false );
@@ -7670,7 +7671,7 @@ static gpointer wstEOSDetectionThread(gpointer data)
    while( !sink->soc.quitEOSDetectionThread )
    {
       usleep( 1000000/frameRate );
-      if(sink->soc.decoderResetNeeded && sink->soc.decoderRetryCount < MAX_DECODER_RETRIES )
+      if(sink->soc.decoderResetNeeded )
       {
 		  pthread_mutex_lock(&sink->soc.reset_lock);
 	      GST_ERROR("In wstEOSDetectionThread: Resetting the decoder");
