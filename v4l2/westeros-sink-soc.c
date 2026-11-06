@@ -2606,7 +2606,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    sink->soc.startedOutOfSegment= FALSE;
-   sink->soc.decoderRetryCount=0;
+  // sink->soc.decoderRetryCount=0;
    sink->soc.decoderResetNeeded=FALSE;
    wstFlushPixelAspectRatio( sink, false );
    #ifdef USE_GST_AFD
@@ -7392,12 +7392,17 @@ capture_start:
                   GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
-				pthread_mutex_lock(&sink->soc.reset_lock);
-		         if (sink->soc.decoderRetryCount >= MAX_DECODER_RETRIES || sink->soc.quitEOSDetectionThread)
-      		    {
+					  if ( pthread_mutex_trylock(&sink->soc.reset_lock) != 0 )
+                      {
+                         usleep( 1000 );
+                         continue;
+                      }		         
+					  if (sink->soc.decoderRetryCount >= MAX_DECODER_RETRIES || sink->soc.quitEOSDetectionThread)
+      		        {
 		  			GST_ERROR("decoder retry exceeded or got EOS detected-- retry count:%d",sink->soc.decoderRetryCount);
 					sink->soc.decoderRetryCount=0;
                     sink->soc.decodeError= TRUE;
+				    pthread_mutex_unlock(&sink->soc.reset_lock);
                     postDecodeErrorAndExit( sink, "no output from decoder" );
                     goto exit;			
 				}
@@ -7407,9 +7412,9 @@ capture_start:
                      sink->soc.decoderRetryCount,
                      MAX_DECODER_RETRIES);
 				sink->soc.decoderResetNeeded = true;
+				pthread_mutex_unlock(&sink->soc.reset_lock);
 				GST_ERROR("Going to et new video decode start time\n");
 		    }
-					  				pthread_mutex_unlock(&sink->soc.reset_lock);
 
                   }
                }
