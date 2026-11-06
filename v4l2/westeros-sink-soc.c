@@ -7693,9 +7693,11 @@ static gpointer wstEOSDetectionThread(gpointer data)
 			  wstDecoderReset(sink,false);
 			  doReset = false;
 		  }
-
-
       }
+	  else
+	  {
+		  		  pthread_mutex_unlock(&sink->soc.reset_lock);
+	  }
 	   
 
       if ( !sink->soc.quitEOSDetectionThread )
