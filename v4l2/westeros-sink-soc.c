@@ -7670,9 +7670,9 @@ static gpointer wstEOSDetectionThread(gpointer data)
    while( !sink->soc.quitEOSDetectionThread )
    {
       usleep( 1000000/frameRate );
+	  pthread_mutex_lock(&sink->soc.reset_lock);
       if(sink->soc.decoderResetNeeded )
       {
-		  pthread_mutex_lock(&sink->soc.reset_lock);
 	      GST_ERROR("In wstEOSDetectionThread: Resetting the decoder");
 		  sink->soc.decoderRetryCount++;
 		  if ( sink->videoStarted )
