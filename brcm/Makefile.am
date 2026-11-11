@@ -37,7 +37,7 @@ endif
 
 plugin_LTLIBRARIES = libgstwesterossink.la
 
-libgstwesterossink_la_SOURCES = westeros-sink.c westeros-sink-soc.c
+libgstwesterossink_la_SOURCES = westeros-sink.c westeros-sink-soc.c westeros-sink-metrics.c
 
 libgstwesterossink_la_CFLAGS= \
    $(AM_CFLAGS) \

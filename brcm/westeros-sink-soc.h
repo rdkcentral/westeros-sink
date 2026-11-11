@@ -28,6 +28,7 @@
 #include "nexus_simple_video_decoder.h"
 
 #include "simplebuffer-client-protocol.h"
+#include "westeros-sink-metrics.h"
 
 #define WESTEROS_SINK_CAPS \
            "video/x-brcm-avd;"
@@ -106,6 +107,7 @@ struct _GstWesterosSinkSoc
    guint prevFifoDepth;
    guint prevNumDecoded;
    guint prevNumDecodeErrors;
+   WstVideoMetrics metrics;
    gboolean captureEnabled;
    gboolean videoPlaying;
    int framesBeforeHideVideo;
