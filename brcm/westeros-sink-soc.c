@@ -143,6 +143,7 @@ enum
 static guint g_signals[MAX_SIGNAL]= {0, 0, 0};
 
 static void sinkSocStopVideo( GstWesterosSink *sink );
+static void resolveVideoMetrics( GstWesterosSink *sink, gboolean outputOnly );
 static void freeCaptureSurfaces( GstWesterosSink *sink );
 static gboolean allocCaptureSurfaces( GstWesterosSink *sink );
 static gboolean queryPeerHandles(GstWesterosSink *sink);
@@ -862,6 +863,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.sb= 0;
    sink->soc.activeBuffers= 0;
    sink->soc.captureEnabled= FALSE;
+   wstVideoMetricsInit( &sink->soc.metrics );
    sink->soc.presentationStarted= FALSE;
    sink->soc.surfaceClientId= 0;
    sink->soc.surfaceClient= 0;
@@ -980,6 +982,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 {
+   wstVideoMetricsTerm( &sink->soc.metrics );
    NxClient_Uninit(); 
 }
 
@@ -1548,6 +1551,8 @@ gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolea
    sink->soc.videoPlaying = FALSE;
    UNLOCK(sink);
 
+   resolveVideoMetrics( sink, TRUE );
+
    GST_DEBUG("sink_soc_playing_to_paused: stcChannel %p", sink->soc.stcChannel);
    if ( sink->soc.stcChannel )
    {
@@ -1784,6 +1789,8 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
       return;
    }
    #endif
+
+   resolveVideoMetrics( sink, FALSE );
 
    if ( sink->soc.videoDecoder )
    {
@@ -2023,6 +2030,8 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
 
 static void sinkSocStopVideo( GstWesterosSink *sink )
 {
+   resolveVideoMetrics( sink, FALSE );
+
    LOCK( sink );
    if ( sink->soc.captureThread )
    {
@@ -2535,6 +2544,10 @@ static gpointer captureThread(gpointer data)
 
       if ( emitResourceChange )
       {
+         if ( !haveResources )
+         {
+            resolveVideoMetrics( sink, FALSE );
+         }
          GstPad *pad= gst_pad_get_peer( sink->peerPad );
          if ( pad )
          {
@@ -2625,6 +2638,8 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
 
    if ( useGfxPath && !sink->soc.captureEnabled )
    {
+      resolveVideoMetrics( sink, TRUE );
+
       NEXUS_Error rc;
       NEXUS_SimpleVideoDecoderStartCaptureSettings captureSettings;
       
@@ -2858,6 +2873,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
    gboolean flushStarted= FALSE;
    gboolean emitFirstFrame= FALSE;
    guint64 prevPTS;
+   GPtrArray *metricsPending= NULL;
 
    LOCK( sink );
    haveHardware= sink->soc.haveHardware;
@@ -3029,9 +3045,28 @@ static void updateVideoStatus( GstWesterosSink *sink )
          sink->soc.prevFifoDepth= videoStatus.fifoDepth;
          sink->soc.prevNumDecoded= videoStatus.numDecoded;
 
+         if ( !sink->flushStarted && sink->soc.haveResources )
+         {
+            WstVideoMetricsSample sample;
+            sample.numDisplayed= videoStatus.numDisplayed;
+            sample.numDrops= videoStatus.numDecodeDrops + videoStatus.numDisplayDrops;
+            sample.numDecodeErrors= videoStatus.numDecodeErrors;
+            sample.numDisplayUnderflows= videoStatus.numDisplayUnderflows;
+            sample.pts45k= videoStatus.pts;
+            sample.fifoDepth= videoStatus.fifoDepth;
+            sample.numBytesDecoded= videoStatus.numBytesDecoded;
+            sample.inSegment= sink->soc.firstPtsCallbackCalled;
+            sample.eos= sink->eosDetected || sink->eosEventSeen;
+            sample.captureEnabled= sink->soc.captureEnabled;
+            wstVideoMetricsSample( &sink->soc.metrics, &sample, gst_util_get_timestamp() );
+            metricsPending= wstVideoMetricsTakePending( &sink->soc.metrics );
+         }
+
          sink->srcWidth= videoStatus.source.width;
          sink->srcHeight= videoStatus.source.height;
          UNLOCK( sink );
+
+         wstVideoMetricsPost( GST_ELEMENT(sink), metricsPending );
 
          if ( sink->statsLogUpdate )
          {
@@ -3347,6 +3382,7 @@ static void firstPtsCallback( void *userData, int n )
 static void underflowCallback( void *userData, int n )
 {
    GstWesterosSink *sink= (GstWesterosSink*)userData;
+   GPtrArray *metricsPending;
    NEXUS_Error rc;
    NEXUS_VideoDecoderStatus videoStatus;
    WESTEROS_UNUSED(n);
@@ -3390,9 +3426,13 @@ static void underflowCallback( void *userData, int n )
             if ( sink->soc.presentationStarted && !sink->soc.ignoreDiscontinuity && videoStatus.numBytesDecoded )
             {
                sink->soc.emitUnderflow= TRUE;
+               wstVideoMetricsUnderflowStarted( &sink->soc.metrics, videoStatus.pts, videoStatus.numBytesDecoded,
+                                                gst_util_get_timestamp() );
             }
          }
+         metricsPending= wstVideoMetricsTakePending( &sink->soc.metrics );
          UNLOCK(sink);
+         wstVideoMetricsPost( GST_ELEMENT(sink), metricsPending );
       }
       else
       {
@@ -5059,7 +5099,24 @@ static void sinkReleaseResources( GstWesterosSink *sink )
 static GstStructure *wstSinkGetStats( GstWesterosSink * sink )
 {
    g_return_val_if_fail (sink != NULL, NULL);
-   return gst_structure_new ("application/x-gst-base-sink-stats",
-      "dropped", G_TYPE_UINT64, (guint64)sink->soc.numDropped,
-      "rendered", G_TYPE_UINT64, (guint64)sink->soc.numDecoded, NULL);
+   return wstVideoMetricsGetStats( &sink->soc.metrics, !sink->soc.captureEnabled );
+}
+
+static void resolveVideoMetrics( GstWesterosSink *sink, gboolean outputOnly )
+{
+   GPtrArray *pending;
+
+   LOCK(sink);
+   if ( outputOnly )
+   {
+      wstVideoMetricsResolveOutput( &sink->soc.metrics, gst_util_get_timestamp() );
+   }
+   else
+   {
+      wstVideoMetricsResolveAll( &sink->soc.metrics, gst_util_get_timestamp() );
+   }
+   pending= wstVideoMetricsTakePending( &sink->soc.metrics );
+   UNLOCK(sink);
+
+   wstVideoMetricsPost( GST_ELEMENT(sink), pending );
 }
