@@ -126,8 +126,31 @@ enum
   PROP_SECURE_VIDEO
   #endif
   ,
-  PROP_STATS
+  PROP_STATS,
+   PROP_METRICS_SOURCE_ID,
+   PROP_METRICS_SESSION_ID
 };
+
+/* metric_type values of the "media-pipeline-metric" bus message */
+enum
+{
+   METRIC_VIDEO_FRAME_DROP= 0,
+   METRIC_AUDIO_FRAME_DROP= 1,
+   METRIC_VIDEO_DECODE_ERROR= 2,
+   METRIC_AUDIO_DECODE_ERROR= 3,
+   METRIC_VIDEO_FRAME_REPEAT= 4,
+   METRIC_AUDIO_GAP= 5,
+   METRIC_BUFFER_UNDERFLOW= 6
+};
+
+enum
+{
+   METRIC_PHASE_OCCURRENCE= 0,
+   METRIC_PHASE_STARTED= 1,
+   METRIC_PHASE_RESOLVED= 2
+};
+
+#define PTS45K_TO_NS( pts ) ( ((guint64)(pts)*GST_SECOND)/45000ULL )
 
 enum
 {
@@ -147,6 +170,10 @@ static void freeCaptureSurfaces( GstWesterosSink *sink );
 static gboolean allocCaptureSurfaces( GstWesterosSink *sink );
 static gboolean queryPeerHandles(GstWesterosSink *sink);
 static void postErrorMessage( GstWesterosSink *sink, int errorCode, const char *errorText );
+static void postMetricMessage( GstWesterosSink *sink, guint metricType, guint64 ptsNs );
+static void postMetricEpisodeMessage( GstWesterosSink *sink, guint metricType, guint phase, guint64 ptsNs, guint64 count, guint64 durationNs );
+static void resetMetricEpisodes( GstWesterosSink *sink );
+static void updateMetrics( GstWesterosSink *sink, NEXUS_VideoDecoderStatus *videoStatus );
 static gpointer captureThread(gpointer data);
 static void processFrame( GstWesterosSink *sink );
 static void updateVideoStatus( GstWesterosSink *sink );
@@ -328,7 +355,18 @@ void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
         (GParamFlags)(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
    #endif
 
+   g_object_class_install_property (gobject_class, PROP_METRICS_SOURCE_ID,
+     g_param_spec_uint ("metrics-source-id",
+                        "metrics source id",
+                        "source_id reported in media-pipeline-metric bus messages",
+                        0, G_MAXUINT, 0, G_PARAM_READWRITE));
+
    gstelement_class= GST_ELEMENT_CLASS(klass);
+       g_object_class_install_property (gobject_class, PROP_METRICS_SESSION_ID,
+          g_param_spec_uint ("metrics-session-id",
+                                       "metrics session id",
+                                       "session_id reported in media-pipeline-metric bus messages",
+                                       0, G_MAXUINT, 0, G_PARAM_READWRITE));
    g_signals[SIGNAL_FIRSTFRAME]= g_signal_new( "first-video-frame-callback",
                                                G_TYPE_FROM_CLASS(gstelement_class),
                                                (GSignalFlags) (G_SIGNAL_RUN_LAST),
@@ -859,6 +897,16 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevFifoDepth= 0;
    sink->soc.prevNumDecoded= 0;
    sink->soc.prevNumDecodeErrors= 0;
+   sink->soc.metricSourceId= 0;
+   sink->soc.metricSessionId= 0;
+   sink->soc.metricRendered= 0;
+   sink->soc.metricDropped= 0;
+   sink->soc.metricCorrupted= 0;
+   sink->soc.metricPrevDisplayed= 0;
+   sink->soc.metricPrevDrops= 0;
+   sink->soc.metricPrevRepeats= 0;
+   sink->soc.metricPrevErrors= 0;
+   resetMetricEpisodes( sink );
    sink->soc.sb= 0;
    sink->soc.activeBuffers= 0;
    sink->soc.captureEnabled= FALSE;
@@ -1224,6 +1272,11 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             sink->soc.enableDecodeErrorSignal= g_value_get_boolean(value);
             break;
          }
+      case PROP_METRICS_SOURCE_ID:
+         {
+            sink->soc.metricSourceId= g_value_get_uint(value);
+            break;
+         }
       #if (NEXUS_NUM_VIDEO_WINDOWS > 1)
       case PROP_PIP:
          {
@@ -1240,6 +1293,9 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
             break;
          }
       #endif
+      case PROP_METRICS_SESSION_ID:
+         sink->soc.metricSessionId= g_value_get_uint(value);
+         break;
       default:
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
          break;
@@ -1356,6 +1412,12 @@ void gst_westeros_sink_soc_get_property(GObject *object, guint prop_id, GValue *
             g_value_take_boxed( value, wstSinkGetStats(sink) );
             UNLOCK(sink);
          }
+         break;
+      case PROP_METRICS_SOURCE_ID:
+         g_value_set_uint(value, sink->soc.metricSourceId);
+         break;
+      case PROP_METRICS_SESSION_ID:
+         g_value_set_uint(value, sink->soc.metricSessionId);
          break;
       default:
          G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -1821,6 +1883,11 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.prevFifoDepth= 0;
    sink->soc.prevNumDecoded= 0;
    sink->soc.prevNumDecodeErrors= 0;
+   sink->soc.metricPrevDisplayed= 0;
+   sink->soc.metricPrevDrops= 0;
+   sink->soc.metricPrevRepeats= 0;
+   sink->soc.metricPrevErrors= 0;
+   resetMetricEpisodes( sink );
    sink->soc.presentationStarted= FALSE;
    sink->soc.lastStartPts45k= 0;
    UNLOCK(sink);
@@ -2122,6 +2189,11 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
    sink->soc.prevFifoDepth= 0;
    sink->soc.prevNumDecoded= 0;
    sink->soc.prevNumDecodeErrors= 0;
+   sink->soc.metricPrevDisplayed= 0;
+   sink->soc.metricPrevDrops= 0;
+   sink->soc.metricPrevRepeats= 0;
+   sink->soc.metricPrevErrors= 0;
+   resetMetricEpisodes( sink );
    sink->soc.checkForEOS= FALSE;
    sink->soc.emitEOS= FALSE;
    sink->soc.lastRenderPts=0;
@@ -2417,6 +2489,146 @@ static void postErrorMessage( GstWesterosSink *sink, int errorCode, const char *
    {
       GST_ERROR("Error: g_error_new_literal failed for errorCode %d errorText (%s)", errorCode, errorText );
    }
+
+}
+
+static void postMetricMessage( GstWesterosSink *sink, guint metricType, guint64 ptsNs )
+{
+   postMetricEpisodeMessage( sink, metricType, METRIC_PHASE_OCCURRENCE, ptsNs, 0, 0 );
+}
+
+static void postMetricEpisodeMessage( GstWesterosSink *sink, guint metricType, guint phase, guint64 ptsNs, guint64 count, guint64 durationNs )
+{
+   GstStructure *s= gst_structure_new( "media-pipeline-metric",
+                                       "metric_type", G_TYPE_UINT, metricType,
+                                       "phase", G_TYPE_UINT, phase,
+                                       "source_id", G_TYPE_UINT, sink->soc.metricSourceId,
+                                       "session_id", G_TYPE_UINT, sink->soc.metricSessionId,
+                                       "pts_ns", G_TYPE_INT64, (gint64)ptsNs,
+                                       NULL );
+   if ( s )
+   {
+      if ( phase == METRIC_PHASE_RESOLVED )
+      {
+         gst_structure_set( s, "duration_ns", G_TYPE_UINT64, durationNs, NULL );
+         if ( metricType == METRIC_VIDEO_FRAME_REPEAT )
+         {
+            gst_structure_set( s, "count", G_TYPE_UINT64, count, NULL );
+         }
+      }
+      GstMessage *msg= gst_message_new_element( GST_OBJECT_CAST(sink), s );
+      GST_DEBUG("post media-pipeline-metric: type %u phase %u source %u session %u pts %"G_GUINT64_FORMAT,
+                metricType, phase, sink->soc.metricSourceId, sink->soc.metricSessionId, ptsNs);
+      if ( !msg || !gst_element_post_message( GST_ELEMENT(sink), msg ) )
+      {
+         GST_WARNING("unable to post media-pipeline-metric type %u", metricType);
+      }
+   }
+}
+
+static guint metricDelta( guint curr, guint *prev )
+{
+   /* a decrease means the decoder counters were reset */
+   guint delta= (curr >= *prev) ? curr - *prev : curr;
+   *prev= curr;
+   return delta;
+}
+
+static void resetMetricEpisodes( GstWesterosSink *sink )
+{
+   sink->soc.metricFreezeActive= FALSE;
+   sink->soc.metricFreezePts= 0;
+   sink->soc.metricFreezeStartNs= 0;
+   sink->soc.metricFreezeCount= 0;
+   sink->soc.metricUnderflowPending= FALSE;
+   sink->soc.metricUnderflowActive= FALSE;
+   sink->soc.metricUnderflowPts= 0;
+   sink->soc.metricUnderflowStartNs= 0;
+   sink->soc.metricUnderflowBytes= 0;
+}
+
+static void updateMetrics( GstWesterosSink *sink, NEXUS_VideoDecoderStatus *videoStatus )
+{
+   guint64 ptsNs= PTS45K_TO_NS(videoStatus->pts);
+   guint64 nowNs= (guint64)g_get_monotonic_time()*1000ULL;
+   guint drops= videoStatus->numDecodeDrops + videoStatus->numDisplayDrops;
+   guint errors= videoStatus->numDecodeErrors + videoStatus->numDisplayErrors;
+
+   sink->soc.metricRendered += metricDelta( videoStatus->numDisplayed, &sink->soc.metricPrevDisplayed );
+
+   if ( !sink->soc.firstPtsCallbackCalled )
+   {
+      /* drops/repeats before first PTS are out-of-segment and not reported */
+      sink->soc.metricPrevDrops= drops;
+      sink->soc.metricPrevRepeats= videoStatus->numDisplayUnderflows;
+      resetMetricEpisodes( sink );
+   }
+   else
+   {
+      guint newDrops= metricDelta( drops, &sink->soc.metricPrevDrops );
+      guint newRepeats;
+      sink->soc.metricDropped += newDrops;
+      if ( !sink->soc.captureEnabled )
+      {
+         while ( newDrops > 0 )
+         {
+            postMetricMessage( sink, METRIC_VIDEO_FRAME_DROP, ptsNs );
+            --newDrops;
+         }
+      }
+      if ( videoStatus->numDisplayUnderflows < sink->soc.metricPrevRepeats || sink->soc.captureEnabled )
+      {
+         sink->soc.metricFreezeActive= FALSE;
+      }
+      newRepeats= metricDelta( videoStatus->numDisplayUnderflows, &sink->soc.metricPrevRepeats );
+      if ( !sink->soc.captureEnabled )
+      {
+         if ( sink->soc.metricFreezeActive )
+         {
+            sink->soc.metricFreezeCount += newRepeats;
+            if ( videoStatus->pts != sink->soc.metricFreezePts )
+            {
+               postMetricEpisodeMessage( sink, METRIC_VIDEO_FRAME_REPEAT, METRIC_PHASE_RESOLVED,
+                                         PTS45K_TO_NS(sink->soc.metricFreezePts), sink->soc.metricFreezeCount,
+                                         nowNs-sink->soc.metricFreezeStartNs );
+               sink->soc.metricFreezeActive= FALSE;
+            }
+         }
+         else if ( newRepeats && !sink->eosDetected && !sink->eosEventSeen )
+         {
+            sink->soc.metricFreezeActive= TRUE;
+            sink->soc.metricFreezePts= videoStatus->pts;
+            sink->soc.metricFreezeStartNs= nowNs;
+            sink->soc.metricFreezeCount= newRepeats;
+            postMetricEpisodeMessage( sink, METRIC_VIDEO_FRAME_REPEAT, METRIC_PHASE_STARTED, ptsNs, 0, 0 );
+         }
+      }
+
+      if ( sink->soc.metricUnderflowPending )
+      {
+         sink->soc.metricUnderflowPending= FALSE;
+         sink->soc.metricUnderflowActive= TRUE;
+         postMetricEpisodeMessage( sink, METRIC_BUFFER_UNDERFLOW, METRIC_PHASE_STARTED,
+                                   PTS45K_TO_NS(sink->soc.metricUnderflowPts), 0, 0 );
+      }
+      if ( sink->soc.metricUnderflowActive &&
+           (videoStatus->fifoDepth > 0 || videoStatus->numBytesDecoded > sink->soc.metricUnderflowBytes) )
+      {
+         postMetricEpisodeMessage( sink, METRIC_BUFFER_UNDERFLOW, METRIC_PHASE_RESOLVED, ptsNs, 0,
+                                   nowNs-sink->soc.metricUnderflowStartNs );
+         sink->soc.metricUnderflowActive= FALSE;
+      }
+   }
+
+   {
+      guint newErrors= metricDelta( errors, &sink->soc.metricPrevErrors );
+      sink->soc.metricCorrupted += newErrors;
+      while ( newErrors > 0 )
+      {
+         postMetricMessage( sink, METRIC_VIDEO_DECODE_ERROR, ptsNs );
+         --newErrors;
+      }
+   }
 }
 
 static gpointer captureThread(gpointer data) 
@@ -2488,6 +2700,8 @@ static gpointer captureThread(gpointer data)
 
          g_signal_emit (G_OBJECT(sink), g_signals[SIGNAL_UNDERFLOW], 0, videoStatus.fifoDepth, videoStatus.queueDepth);
 
+         postMetricMessage( sink, METRIC_BUFFER_UNDERFLOW, PTS45K_TO_NS(videoStatus.pts) );
+
          GstPad *pad= gst_pad_get_peer( sink->peerPad );
          if ( pad )
          {
@@ -2517,6 +2731,9 @@ static gpointer captureThread(gpointer data)
             GST_ERROR("Error NEXUS_SimpleVideoDecoder_GetStatus: %d", (int)rc);
          }
 
+         /* PTS discontinuity (video frame gap) is reported as a frame drop */
+         postMetricMessage( sink, METRIC_VIDEO_FRAME_DROP, PTS45K_TO_NS(videoStatus.pts) );
+
          GstPad *pad= gst_pad_get_peer( sink->peerPad );
          if ( pad )
          {
@@ -2535,6 +2752,10 @@ static gpointer captureThread(gpointer data)
 
       if ( emitResourceChange )
       {
+         if ( !haveResources )
+         {
+            resetMetricEpisodes( sink );
+         }
          GstPad *pad= gst_pad_get_peer( sink->peerPad );
          if ( pad )
          {
@@ -3029,6 +3250,11 @@ static void updateVideoStatus( GstWesterosSink *sink )
          sink->soc.prevFifoDepth= videoStatus.fifoDepth;
          sink->soc.prevNumDecoded= videoStatus.numDecoded;
 
+         if ( !sink->flushStarted && sink->soc.haveResources )
+         {
+            updateMetrics( sink, &videoStatus );
+         }
+
          sink->srcWidth= videoStatus.source.width;
          sink->srcHeight= videoStatus.source.height;
          UNLOCK( sink );
@@ -3389,6 +3615,13 @@ static void underflowCallback( void *userData, int n )
          {
             if ( sink->soc.presentationStarted && !sink->soc.ignoreDiscontinuity && videoStatus.numBytesDecoded )
             {
+               if ( !sink->soc.metricUnderflowActive && !sink->soc.metricUnderflowPending )
+               {
+                  sink->soc.metricUnderflowPending= TRUE;
+                  sink->soc.metricUnderflowPts= videoStatus.pts;
+                  sink->soc.metricUnderflowStartNs= (guint64)g_get_monotonic_time()*1000ULL;
+                  sink->soc.metricUnderflowBytes= videoStatus.numBytesDecoded;
+               }
                sink->soc.emitUnderflow= TRUE;
             }
          }
@@ -5063,3 +5296,4 @@ static GstStructure *wstSinkGetStats( GstWesterosSink * sink )
       "dropped", G_TYPE_UINT64, (guint64)sink->soc.numDropped,
       "rendered", G_TYPE_UINT64, (guint64)sink->soc.numDecoded, NULL);
 }
+
