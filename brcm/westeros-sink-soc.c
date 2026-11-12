@@ -5306,6 +5306,8 @@ static void sinkReleaseResources( GstWesterosSink *sink )
 static GstStructure *wstSinkGetStats( GstWesterosSink * sink )
 {
    g_return_val_if_fail (sink != NULL, NULL);
-   return NULL;
+   return gst_structure_new( "application/x-gst-base-sink-stats",
+      "dropped", G_TYPE_UINT64, (guint64)sink->soc.numDropped,
+      "rendered", G_TYPE_UINT64, (guint64)sink->soc.numDecoded, NULL);
 }
 
