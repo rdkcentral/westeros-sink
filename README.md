@@ -3,46 +3,48 @@ Wayland Compositor
 
 ## Broadcom Video Metric Messages
 
-The Broadcom sink posts `media-pipeline-metric` element messages with
-`metric_type` (unsigned integer), `phase` (unsigned integer), `source_id`,
-`session_id`, and `pts_ns` (signed 64-bit stream PTS in nanoseconds).
-Existing SoC metric type numbers are retained; they are not protobuf enum values.
+The Broadcom sink posts `GST_MESSAGE_ELEMENT` messages with the structure name
+`media-pipeline-metric`. Each message contains `metric` and `observation-kind`
+as `G_TYPE_UINT`; optional `pts-ns` is `G_TYPE_INT64`. These names, types and
+values follow the [SoC media metrics specification](../SPECIFICATION-soc-media-metrics%20(3).md).
+The message source is the producing sink element. Existing `source_id` and
+`session_id` fields are optional integration metadata; they do not replace the
+authoritative GStreamer message source.
 
-| Event | metric_type | phase |
-|---|---|---|
-| Video frame drop | 0 | 0 (OCCURRENCE) |
-| Video frame freeze start | 4 (VIDEO_FRAME_REPEAT) | 1 (STARTED) |
-| Video frame freeze end | 4 (VIDEO_FRAME_REPEAT) | 2 (RESOLVED) |
-| Video decode error | 2 | 0 (OCCURRENCE) |
-| Video underflow start | 6 (BUFFER_UNDERFLOW) | 1 (STARTED) |
-| Video underflow end | 6 (BUFFER_UNDERFLOW) | 2 (RESOLVED) |
+This video sink emits the applicable video-drop, video-decode-error,
+video-repeat and decoder-underflow metrics; audio metrics are owned by the
+corresponding audio-path elements.
 
-Each decoder drop/error counter increment produces a separate occurrence message.
-Occurrences expanded from one status sample may share the same current PTS.
-Cumulative rendered, dropped and corrupted frame counters are not included.
-Resolved freeze messages include the episode's `count` and `duration_ns` as
-unsigned 64-bit values, retaining the freeze-start PTS. Resolved underflow
-messages include `duration_ns` and the recovery PTS, but no count. Started and
-occurrence messages carry neither summary field. Observation timestamps belong
-to the Rialto collector and are not added to the SoC envelope.
+| Metric | `metric` | `observation-kind` |
+|---|---:|---|
+| Video frame drop | 1 | 1 (OCCURRENCE) |
+| Video decode error | 3 | 1 (OCCURRENCE) |
+| Video frame repeat | 5 | 2 (EPISODE_STARTED), 3 (EPISODE_RESOLVED) |
+| Buffer underflow | 7 | 2 (EPISODE_STARTED), 3 (EPISODE_RESOLVED) |
 
-Freeze starts on a display-underflow counter increment and resolves when the
-sampled decoder PTS changes. Further counter increments at the same PTS extend
-the episode without another Started message. Underflow starts from the native
-FIFO-empty callback and resolves on input FIFO refill or resumed byte consumption.
-The legacy buffer-underflow signal is unchanged. Pause, flush, stop and observed
-resource loss cancel unfinished episodes rather than reporting false recovery.
-Video frame capture suppresses pipeline drop/freeze events because final
-presentation occurs in the application renderer; decode-error events remain.
+Resolved messages contain `duration-ns` (`G_TYPE_UINT64`); video-repeat
+resolutions also contain `count` (`G_TYPE_UINT64`). Both repeat and underflow
+resolutions retain the episode-start `pts-ns`. Occurrences contain no summary
+fields. The legacy buffer-underflow signal and upstream event are unchanged.
 
-These are sampled observations, not a fully frame-precise HAL implementation:
-counter/PTS snapshots cannot attribute repeats that occur between polls or
-distinguish structured cadence unless Nexus excludes it from its underflow
-counter. Freeze duration is measured between detected boundaries using monotonic
-time. Underflow observations depend on the native FIFO-empty callback, which is
-disabled by the existing immediate-output decoder configuration. Full proposal
-conformance requires authoritative renderer boundaries and starvation recovery
-observations from the platform SDK in those cases.
+The existing readable `stats` property is unchanged: it returns `rendered`
+from the sink's decoded-frame count and `dropped` from its existing drop count.
+It does not expose the cumulative metric counters or a `corrupted` field, and
+is not authoritative for final presentation after frame capture handoff.
+
+The sink expands sampled native counter deltas into individual occurrence
+messages. The status loop sleeps for 8 ms between samples; existing native
+counter-delta and decoder-reset handling is retained. Episode duration uses
+monotonic time. Pause resolves video-repeat but retains decoder underflow while
+demand continues; flush, EOS, resource loss and teardown resolve the episodes
+owned by the affected decoder/output path.
+
+The Broadcom SDK currently exposes sampled counters rather than frame-identity
+callbacks. Consequently, the sink cannot independently prove frame-level
+deduplication, distinguish all structured cadence from unintended repeats, or
+observe repeat presentation boundaries between status polls. The native FIFO
+empty callback is also unavailable in immediate-output mode. Those cases still
+require platform observations to meet full SoC-spec conformance.
 
 Westeros is a light-weight Wayland compositor library. It uses the Wayland protocols, and is designed
 to be compatible with applications built to use Wayland compositors. It implements a library that
