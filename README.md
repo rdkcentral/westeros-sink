@@ -27,17 +27,20 @@ resolutions also contain `count` (`G_TYPE_UINT64`). Both repeat and underflow
 resolutions retain the episode-start `pts-ns`. Occurrences contain no summary
 fields. The legacy buffer-underflow signal and upstream event are unchanged.
 
-The existing readable `stats` property is unchanged: it returns `rendered`
-from the sink's decoded-frame count and `dropped` from its existing drop count.
-It does not expose the cumulative metric counters or a `corrupted` field, and
-is not authoritative for final presentation after frame capture handoff.
+The readable `stats` property returns one `GstStructure` snapshot containing
+`rendered`, `dropped` and `corrupted`, all `G_TYPE_UINT64`. The snapshot uses
+the sink's cumulative metric counters and remains monotonic across flushes and
+decoder restarts. It returns unavailable (`NULL`) after frame capture hands
+final presentation to the application renderer.
 
 The sink expands sampled native counter deltas into individual occurrence
-messages. The status loop sleeps for 8 ms between samples; existing native
-counter-delta and decoder-reset handling is retained. Episode duration uses
-monotonic time. Pause resolves video-repeat but retains decoder underflow while
-demand continues; flush, EOS, resource loss and teardown resolve the episodes
-owned by the affected decoder/output path.
+messages. The status loop sleeps for 8 ms between samples; native `guint`
+counters use unsigned delta arithmetic, with baselines reset at decoder
+flush/restart boundaries. The Broadcom SDK must confirm native reset behavior
+outside those boundaries and the maximum event rate against the actual sampling
+interval. Episode duration uses monotonic time. Pause resolves video-repeat but
+retains decoder underflow while demand continues; flush, EOS, resource loss and
+teardown resolve the episodes owned by the affected decoder/output path.
 
 The Broadcom SDK currently exposes sampled counters rather than frame-identity
 callbacks. Consequently, the sink cannot independently prove frame-level
