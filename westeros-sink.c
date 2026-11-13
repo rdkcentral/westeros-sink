@@ -2105,11 +2105,7 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             gboolean eosDetected= sink->eosDetected;
             sink->eosEventSeen= TRUE;
             UNLOCK( sink );
-            if ( eosDetected )
-            {
-               passToDefault= TRUE;
-            }
-            else
+            if ( !eosDetected )
             {
                 passToDefault = (GST_STATE(sink) != GST_STATE_PLAYING) || (GST_STATE_PENDING(sink) != GST_STATE_VOID_PENDING);
                 if (!passToDefault)
@@ -2122,6 +2118,7 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
                                        gst_element_state_get_name(GST_STATE_PENDING(sink)));
                 }
             }
+	        passToDefault= TRUE;
          }
          break;
          
