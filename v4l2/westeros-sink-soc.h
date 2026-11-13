@@ -277,6 +277,8 @@ struct _GstWesterosSinkSoc
    gint64 prevDecodedTimestamp;
    gint64 currentInputPTS;
    gint64 videoDecodeStartTime;
+   int decoderRetryCount;
+   int decoderResetNeeded;
 
    char *devname;
    gboolean enableTextureSignal;
