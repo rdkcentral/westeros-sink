@@ -131,6 +131,13 @@ static void shellSurfaceId(void *data,
    WESTEROS_UNUSED(surface);
 
    sprintf( name, "westeros-sink-surface-%x", surfaceId );
+   fprintf(stderr, "cc_test sink surface_id sink=%p shell=%p surface=%p id=%u name=%s show=%d visible=%d window=%d,%d %dx%d\n",
+           (void*)sink, (void*)wl_simple_shell, (void*)surface, (unsigned)surfaceId, name,
+           sink->show, sink->visible, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
+   fflush(stderr);
+   GST_DEBUG_OBJECT(sink, "cc_test sink surface_id sink=%p shell=%p surface=%p id=%u name=%s show=%d visible=%d window=%d,%d %dx%d",
+                    (void*)sink, (void*)wl_simple_shell, (void*)surface, (unsigned)surfaceId, name,
+                    sink->show, sink->visible, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
    wl_simple_shell_set_name( sink->shell, surfaceId, name );
    if ( (sink->windowWidth == 0) || (sink->windowHeight == 0) )
    {
@@ -201,6 +208,18 @@ static void shellSurfaceStatus(void *data,
    WESTEROS_UNUSED(height);
    if ( sink->show )
    {
+      if ( sink->visible != visible )
+      {
+         fprintf(stderr, "cc_test sink shell_status sink=%p shell=%p ownId=%u eventId=%u match=%d name=%s show=%d visible=%d->%u action=apply windowChange=%d->1 eventGeometry=%d,%d %dx%d\n",
+                 (void*)sink, (void*)wl_simple_shell, (unsigned)sink->surfaceId, (unsigned)surfaceId,
+                 surfaceId == sink->surfaceId, name ? name : "(null)", sink->show, sink->visible,
+                 (unsigned)visible, sink->windowChange, x, y, width, height);
+         fflush(stderr);
+         GST_DEBUG_OBJECT(sink, "cc_test sink shell_status sink=%p shell=%p ownId=%u eventId=%u match=%d name=%s show=%d visible=%d->%u action=apply windowChange=%d->1 eventGeometry=%d,%d %dx%d",
+                          (void*)sink, (void*)wl_simple_shell, (unsigned)sink->surfaceId, (unsigned)surfaceId,
+                          surfaceId == sink->surfaceId, name ? name : "(null)", sink->show, sink->visible,
+                          (unsigned)visible, sink->windowChange, x, y, width, height);
+      }
       sink->visible= visible;
    }
    sink->windowChange= true;

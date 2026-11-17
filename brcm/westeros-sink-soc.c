@@ -1055,6 +1055,13 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
          break;
       case PROP_WINDOW_SHOW:
          {
+            fprintf(stderr, "cc_test sink show_property sink=%p ownId=%u show=%d->%d visible=%d videoWindow=%p decoder=%p capture=%d\n",
+                    (void*)sink, (unsigned)sink->surfaceId, sink->show, g_value_get_boolean(value),
+                    sink->visible, (void*)sink->soc.videoWindow, (void*)sink->soc.videoDecoder, sink->soc.captureEnabled);
+            fflush(stderr);
+            GST_DEBUG_OBJECT(sink, "cc_test sink show_property sink=%p ownId=%u show=%d->%d visible=%d videoWindow=%p decoder=%p capture=%d",
+                             (void*)sink, (unsigned)sink->surfaceId, sink->show, g_value_get_boolean(value),
+                             sink->visible, (void*)sink->soc.videoWindow, (void*)sink->soc.videoDecoder, sink->soc.captureEnabled);
             sink->show= g_value_get_boolean(value);
 
             if ( sink->soc.videoWindow )
@@ -1065,8 +1072,17 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                NEXUS_SurfaceClient_GetSettings( sink->soc.videoWindow, &settings );
                if ( settings.composition.visible != sink->visible )
                {
+                  int ccTestOldVisible= settings.composition.visible;
+                  NEXUS_Error ccTestResult;
                   settings.composition.visible= sink->visible;
-                  NEXUS_SurfaceClient_SetSettings( sink->soc.videoWindow, &settings );
+                  ccTestResult= NEXUS_SurfaceClient_SetSettings( sink->soc.videoWindow, &settings );
+                  fprintf(stderr, "cc_test sink nexus_visible source=show_property sink=%p ownId=%u videoWindow=%p visible=%d->%d show=%d setRc=%d\n",
+                          (void*)sink, (unsigned)sink->surfaceId, (void*)sink->soc.videoWindow,
+                          ccTestOldVisible, sink->visible, sink->show, (int)ccTestResult);
+                  fflush(stderr);
+                  GST_DEBUG_OBJECT(sink, "cc_test sink nexus_visible source=show_property sink=%p ownId=%u videoWindow=%p visible=%d->%d show=%d setRc=%d",
+                                   (void*)sink, (unsigned)sink->surfaceId, (void*)sink->soc.videoWindow,
+                                   ccTestOldVisible, sink->visible, sink->show, (int)ccTestResult);
                }
             }
             if ( sink->soc.videoDecoder )
@@ -3133,8 +3149,21 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
       NEXUS_SurfaceClient_GetSettings( sink->soc.videoWindow, &vClientSettings );
       if ( vClientSettings.composition.visible != sink->visible )
       {
+         int ccTestOldVisible= vClientSettings.composition.visible;
+         NEXUS_Error ccTestResult;
          vClientSettings.composition.visible= sink->visible;
-         NEXUS_SurfaceClient_SetSettings( sink->soc.videoWindow, &vClientSettings );
+         ccTestResult= NEXUS_SurfaceClient_SetSettings( sink->soc.videoWindow, &vClientSettings );
+         fprintf(stderr, "cc_test sink nexus_visible source=update_position sink=%p ownId=%u videoWindow=%p visible=%d->%d show=%d capture=%d textureSignal=%d geometryChanged=%d videoGeometry=%d,%d %dx%d setRc=%d\n",
+                 (void*)sink, (unsigned)sink->surfaceId, (void*)sink->soc.videoWindow,
+                 ccTestOldVisible, sink->visible, sink->show, sink->soc.captureEnabled,
+                 sink->soc.enableTextureSignal, needUpdate, sink->soc.videoX, sink->soc.videoY,
+                 sink->soc.videoWidth, sink->soc.videoHeight, (int)ccTestResult);
+         fflush(stderr);
+         GST_DEBUG_OBJECT(sink, "cc_test sink nexus_visible source=update_position sink=%p ownId=%u videoWindow=%p visible=%d->%d show=%d capture=%d textureSignal=%d geometryChanged=%d videoGeometry=%d,%d %dx%d setRc=%d",
+                          (void*)sink, (unsigned)sink->surfaceId, (void*)sink->soc.videoWindow,
+                          ccTestOldVisible, sink->visible, sink->show, sink->soc.captureEnabled,
+                          sink->soc.enableTextureSignal, needUpdate, sink->soc.videoX, sink->soc.videoY,
+                          sink->soc.videoWidth, sink->soc.videoHeight, (int)ccTestResult);
       }
    }
 
@@ -4909,7 +4938,14 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       clientSettings.composition.contentMode= sink->soc.zoomMode;
       sink->visible= sink->show;
       clientSettings.composition.visible= sink->visible;
-      NEXUS_SurfaceClient_SetSettings(sink->soc.videoWindow, &clientSettings);
+      NEXUS_Error ccTestResult= NEXUS_SurfaceClient_SetSettings(sink->soc.videoWindow, &clientSettings);
+      fprintf(stderr, "cc_test sink nexus_visible source=acquire_video sink=%p ownId=%u videoWindow=%p show=%d visible=%d capture=%d setRc=%d\n",
+              (void*)sink, (unsigned)sink->surfaceId, (void*)sink->soc.videoWindow,
+              sink->show, sink->visible, sink->soc.captureEnabled, (int)ccTestResult);
+      fflush(stderr);
+      GST_DEBUG_OBJECT(sink, "cc_test sink nexus_visible source=acquire_video sink=%p ownId=%u videoWindow=%p show=%d visible=%d capture=%d setRc=%d",
+                       (void*)sink, (unsigned)sink->surfaceId, (void*)sink->soc.videoWindow,
+                       sink->show, sink->visible, sink->soc.captureEnabled, (int)ccTestResult);
 
       if ( sink->videoStarted )
       {
