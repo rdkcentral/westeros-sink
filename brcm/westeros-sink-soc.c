@@ -2502,6 +2502,37 @@ static void postMetricMessage( GstWesterosSink *sink, guint metricType, guint64 
    postMetricEpisodeMessage( sink, metricType, METRIC_PHASE_OCCURRENCE, ptsNs, 0, 0 );
 }
 
+static void postSyntheticIntervalMetrics( GstWesterosSink *sink )
+{
+   static guint64 syntheticFrameCount[3]= {0, 0, 0};
+   guint64 ptsNs= (guint64)g_get_monotonic_time() * 1000ULL;
+
+   syntheticFrameCount[0]++;
+   syntheticFrameCount[1]++;
+   syntheticFrameCount[2]++;
+
+   if ( syntheticFrameCount[0] >= METRIC_FRAME_DROP_INTERVAL )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_FRAME_DROP, ptsNs );
+      GST_DEBUG("Posted synthetic METRIC_VIDEO_FRAME_DROP");
+      syntheticFrameCount[0] = 0;
+   }
+
+   if ( syntheticFrameCount[1] >= METRIC_FRAME_REPEAT_INTERVAL )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_FRAME_REPEAT, ptsNs );
+      GST_DEBUG("Posted synthetic METRIC_VIDEO_FRAME_REPEAT");
+      syntheticFrameCount[1] = 0;
+   }
+
+   if ( syntheticFrameCount[2] >= METRIC_DECODE_ERROR_INTERVAL )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_DECODE_ERROR, ptsNs );
+      GST_DEBUG("Posted synthetic METRIC_VIDEO_DECODE_ERROR");
+      syntheticFrameCount[2] = 0;
+   }
+}
+
 static void postMetricEpisodeMessage( GstWesterosSink *sink, guint metricType, guint phase, guint64 ptsNs, guint64 count, guint64 durationNs )
 {
    GstStructure *s= gst_structure_new( "media-pipeline-metric",
@@ -2607,37 +2638,8 @@ static void updateMetrics( GstWesterosSink *sink, NEXUS_VideoDecoderStatus *vide
 {
    guint64 ptsNs= PTS45K_TO_NS(videoStatus->pts);
    guint64 nowNs= (guint64)g_get_monotonic_time()*1000ULL;
-   static guint64 frameCountSinceInterval[3]= {0, 0, 0};
-   static guint prevNumDisplayed= 0;
-   guint currNumDisplayed= videoStatus->numDisplayed;
-   guint displayedThisCall= (currNumDisplayed >= prevNumDisplayed) ? (currNumDisplayed - prevNumDisplayed) : currNumDisplayed;
-   
-   prevNumDisplayed= currNumDisplayed;
 
-   frameCountSinceInterval[0] += displayedThisCall;
-   frameCountSinceInterval[1] += displayedThisCall;
-   frameCountSinceInterval[2] += displayedThisCall;
-
-   if ( frameCountSinceInterval[0] >= METRIC_FRAME_DROP_INTERVAL )
-   {
-      postMetricMessage( sink, METRIC_VIDEO_FRAME_DROP, ptsNs );
-      GST_DEBUG("Posted METRIC_VIDEO_FRAME_DROP at frame %"G_GUINT64_FORMAT, frameCountSinceInterval[0]);
-      frameCountSinceInterval[0] = 0;
-   }
-
-   if ( frameCountSinceInterval[1] >= METRIC_FRAME_REPEAT_INTERVAL )
-   {
-      postMetricMessage( sink, METRIC_VIDEO_FRAME_REPEAT, ptsNs );
-      GST_DEBUG("Posted METRIC_VIDEO_FRAME_REPEAT at frame %"G_GUINT64_FORMAT, frameCountSinceInterval[1]);
-      frameCountSinceInterval[1] = 0;
-   }
-
-   if ( frameCountSinceInterval[2] >= METRIC_DECODE_ERROR_INTERVAL )
-   {
-      postMetricMessage( sink, METRIC_VIDEO_DECODE_ERROR, ptsNs );
-      GST_DEBUG("Posted METRIC_VIDEO_DECODE_ERROR at frame %"G_GUINT64_FORMAT, frameCountSinceInterval[2]);
-      frameCountSinceInterval[2] = 0;
-   }
+   postSyntheticIntervalMetrics( sink );
 
    updateUnderflowMetric( sink, videoStatus, nowNs );
 }
