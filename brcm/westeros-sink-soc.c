@@ -180,7 +180,6 @@ static void updateUnderflowMetric( GstWesterosSink *sink, NEXUS_VideoDecoderStat
 static void resolveMetricEpisode( GstWesterosSink *sink, guint metricType, guint64 nowNs );
 static void resolveMetricEpisodes( GstWesterosSink *sink, guint64 nowNs );
 static void updateMetrics( GstWesterosSink *sink, NEXUS_VideoDecoderStatus *videoStatus );
-static void postIntervalMetrics( GstWesterosSink *sink, guint metricType, guint interval, guint64 prevFrames, guint64 currFrames, guint64 ptsNs );
 static gpointer captureThread(gpointer data);
 static void processFrame( GstWesterosSink *sink );
 static void updateVideoStatus( GstWesterosSink *sink );
@@ -2503,16 +2502,6 @@ static void postMetricMessage( GstWesterosSink *sink, guint metricType, guint64 
    postMetricEpisodeMessage( sink, metricType, METRIC_PHASE_OCCURRENCE, ptsNs, 0, 0 );
 }
 
-static void postIntervalMetrics( GstWesterosSink *sink, guint metricType, guint interval, guint64 prevFrames, guint64 currFrames, guint64 ptsNs )
-{
-   guint64 count= (currFrames/interval) - (prevFrames/interval);
-   while ( count > 0 )
-   {
-      postMetricMessage( sink, metricType, ptsNs );
-      --count;
-   }
-}
-
 static void postMetricEpisodeMessage( GstWesterosSink *sink, guint metricType, guint phase, guint64 ptsNs, guint64 count, guint64 durationNs )
 {
    GstStructure *s= gst_structure_new( "media-pipeline-metric",
@@ -2618,14 +2607,29 @@ static void updateMetrics( GstWesterosSink *sink, NEXUS_VideoDecoderStatus *vide
 {
    guint64 ptsNs= PTS45K_TO_NS(videoStatus->pts);
    guint64 nowNs= (guint64)g_get_monotonic_time()*1000ULL;
-   guint newRendered= metricDelta( videoStatus->numDisplayed, &sink->soc.metricPrevDisplayed );
-   guint64 prevRendered= sink->soc.metricRendered;
+   static guint64 frameCountSinceInterval[3]= {0, 0, 0};
 
-   sink->soc.metricRendered += newRendered;
+   frameCountSinceInterval[0]++;
+   frameCountSinceInterval[1]++;
+   frameCountSinceInterval[2]++;
 
-   postIntervalMetrics( sink, METRIC_VIDEO_FRAME_DROP, METRIC_FRAME_DROP_INTERVAL, prevRendered, sink->soc.metricRendered, ptsNs );
-   postIntervalMetrics( sink, METRIC_VIDEO_FRAME_REPEAT, METRIC_FRAME_REPEAT_INTERVAL, prevRendered, sink->soc.metricRendered, ptsNs );
-   postIntervalMetrics( sink, METRIC_VIDEO_DECODE_ERROR, METRIC_DECODE_ERROR_INTERVAL, prevRendered, sink->soc.metricRendered, ptsNs );
+   if ( frameCountSinceInterval[0] >= METRIC_FRAME_DROP_INTERVAL )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_FRAME_DROP, ptsNs );
+      frameCountSinceInterval[0] = 0;
+   }
+
+   if ( frameCountSinceInterval[1] >= METRIC_FRAME_REPEAT_INTERVAL )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_FRAME_REPEAT, ptsNs );
+      frameCountSinceInterval[1] = 0;
+   }
+
+   if ( frameCountSinceInterval[2] >= METRIC_DECODE_ERROR_INTERVAL )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_DECODE_ERROR, ptsNs );
+      frameCountSinceInterval[2] = 0;
+   }
 
    updateUnderflowMetric( sink, videoStatus, nowNs );
 }
