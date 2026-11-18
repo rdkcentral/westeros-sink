@@ -4765,6 +4765,9 @@ static void updateVideoDecoderSettings( GstWesterosSink *sink )
    ext_settings.treatIFrameAsRap= true;
    ext_settings.ignoreNumReorderFramesEqZero= true;
 
+   /* mosaic: let windows sharing the BVN path drop pictures instead of stalling */
+   settings.bestEffortBvn = true;
+
    rc= NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
    if ( rc != NEXUS_SUCCESS )
    {
@@ -4879,6 +4882,9 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       connectSettings.simpleVideoDecoder[0].windowCapabilities.maxWidth= MAX_PIP_WIDTH;
       connectSettings.simpleVideoDecoder[0].windowCapabilities.maxHeight= MAX_PIP_HEIGHT;
    }
+   /* mosaic: join a mosaic group, each pipeline keeps its own STC */
+   connectSettings.simpleVideoDecoder[0].decoderCapabilities.virtualized= true;
+   connectSettings.simpleVideoDecoder[0].decoderCapabilities.sharedStc = NEXUS_TristateEnable_eDisable;
    rc= NxClient_Connect(&connectSettings, &sink->soc.connectId);
    GST_DEBUG("sinkAcquireVideo: NxClient_Connect rc %d connectId %d", rc, sink->soc.connectId);
    if ( rc == NEXUS_SUCCESS )
@@ -4886,10 +4892,8 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       sink->soc.presentationStarted= FALSE;
       updateVideoDecoderSettings( sink );
 
-      if ( sink->soc.usePip )
-      {
-         gst_westeros_sink_soc_update_video_position( sink );
-      }
+      /* set window geometry before the window becomes visible (avoids flicker) */
+      gst_westeros_sink_soc_update_video_position( sink );
 
       NEXUS_SurfaceComposition composition;
       NxClient_GetSurfaceClientComposition( sink->soc.surfaceClientId, &composition );
