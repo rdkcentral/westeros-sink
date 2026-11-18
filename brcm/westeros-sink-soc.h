@@ -106,15 +106,6 @@ struct _GstWesterosSinkSoc
    guint prevFifoDepth;
    guint prevNumDecoded;
    guint prevNumDecodeErrors;
-   guint metricSourceId;
-   guint metricSessionId;
-   guint64 metricRendered;
-   guint64 metricDropped;
-   guint64 metricCorrupted;
-   guint metricPrevDisplayed;
-   guint metricPrevDrops;
-   guint metricPrevRepeats;
-   guint metricPrevErrors;
    gboolean metricFreezeActive;
    guint metricFreezePts;
    guint64 metricFreezeStartNs;
@@ -124,6 +115,7 @@ struct _GstWesterosSinkSoc
    guint metricUnderflowPts;
    guint64 metricUnderflowStartNs;
    guint64 metricUnderflowBytes;
+   gboolean metricStatsUnavailable;
    gboolean captureEnabled;
    gboolean videoPlaying;
    int framesBeforeHideVideo;
