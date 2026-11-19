@@ -21,10 +21,16 @@ logging configuration depend on the application.
 
 - `surface_id` identifies the sink, shell connection, Wayland surface and
   assigned protocol ID at registration.
-- `shell_status` records only status events that change `sink->visible` while
-  `show` is enabled. `ownId`, `eventId`, `match` and `name` identify whether
-  another surface's status is being applied. Unchanged visibility and events
-  while `show` is disabled do not produce this diagnostic.
+- `shell_status action=received` records every status event before filtering,
+  including unchanged visibility and events while `show` is disabled.
+- `shell_status action=apply` records matching-surface status events that
+  change `sink->visible` while `show` is enabled.
+- `shell_status action=ignore` records another surface's status when its
+  visibility differs from the sink's cached visibility and `show` is enabled.
+  `ownId`, `eventId`, `match` and `name` identify the surfaces. These events
+  do not change the sink's visibility, opacity, z-order or `windowChange`.
+  Unchanged visibility and events while `show` is disabled do not produce
+  this diagnostic.
 - Broadcom `show_property` records explicit `show-video-window` property calls,
   including the old/new show value and current cached visibility.
 - Broadcom `nexus_visible` records the existing visibility writes at video
@@ -33,19 +39,24 @@ logging configuration depend on the application.
   comes from the existing settings query. `geometryChanged=0` shows that a
   visibility write can occur without a geometry change.
 
-There are no new per-frame logs, timers, counters, state fields, locks, API calls
-to the compositor or hardware, or ID filters. Existing visibility assignments,
-settings queries and writes are unchanged; setter results are captured only
-for logging. A missing `nexus_visible` message does not establish a hardware
+Simple Shell broadcasts status for other clients' surfaces. The sink now
+ignores status whose surface ID does not match its own; matching-surface
+handling and the existing `show` gate are unchanged.
+
+There are no new per-frame logs, timers, counters, state fields, locks or API
+calls to the compositor or hardware. Existing backend settings queries and
+writes are unchanged; setter results are captured only for logging.
+A missing `nexus_visible` message does not establish a hardware
 state: the update may not have run, may have taken the software-decode return,
 may have no video window, or may have found matching visibility already.
 If both logging channels are captured, duplicate messages are expected.
 
-To investigate, correlate a caption `shell_status` with `match=0` and
-`visible=1->0` with a subsequent `nexus_visible source=update_position` for the
-same sink and video window. Also check the reverse transition on caption show
-and whether a `show_property` call explains the write instead. This establishes
-the receiver/write sequence, not successful scanout or a definitive root cause.
+On CC off, expect a caption `shell_status` with `match=0`, `eventVisible=0`
+and `action=ignore`, with no caption-induced Nexus visibility change. On CC on,
+expect `action=received` with `match=0` and `eventVisible=1`; an additional
+`action=ignore` is only logged if its visibility differs from the sink's.
+Verify that video stays visible while captions hide/show, and that status
+targeting the sink's own surface and `show-video-window` still work.
 
 ---
 # Copyright and license

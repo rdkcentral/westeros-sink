@@ -200,12 +200,32 @@ static void shellSurfaceStatus(void *data,
 {
    GstWesterosSink *sink= (GstWesterosSink*)data;
    WESTEROS_UNUSED(wl_simple_shell);
-   WESTEROS_UNUSED(surfaceId);
    WESTEROS_UNUSED(name);
    WESTEROS_UNUSED(x);
    WESTEROS_UNUSED(y);
    WESTEROS_UNUSED(width);
    WESTEROS_UNUSED(height);
+   fprintf(stderr, "cc_test sink shell_status sink=%p shell=%p ownId=%u eventId=%u match=%d name=%s show=%d visible=%d eventVisible=%u action=received\n",
+           (void*)sink, (void*)wl_simple_shell, (unsigned)sink->surfaceId, (unsigned)surfaceId,
+           surfaceId == sink->surfaceId, name ? name : "(null)", sink->show, sink->visible, (unsigned)visible);
+   fflush(stderr);
+   GST_DEBUG_OBJECT(sink, "cc_test sink shell_status sink=%p shell=%p ownId=%u eventId=%u match=%d name=%s show=%d visible=%d eventVisible=%u action=received",
+                    (void*)sink, (void*)wl_simple_shell, (unsigned)sink->surfaceId, (unsigned)surfaceId,
+                    surfaceId == sink->surfaceId, name ? name : "(null)", sink->show, sink->visible, (unsigned)visible);
+   if ( surfaceId != sink->surfaceId )
+   {
+      if ( sink->show && (sink->visible != visible) )
+      {
+         fprintf(stderr, "cc_test sink shell_status sink=%p shell=%p ownId=%u eventId=%u match=0 name=%s show=%d visible=%d eventVisible=%u action=ignore\n",
+                 (void*)sink, (void*)wl_simple_shell, (unsigned)sink->surfaceId, (unsigned)surfaceId,
+                 name ? name : "(null)", sink->show, sink->visible, (unsigned)visible);
+         fflush(stderr);
+         GST_DEBUG_OBJECT(sink, "cc_test sink shell_status sink=%p shell=%p ownId=%u eventId=%u match=0 name=%s show=%d visible=%d eventVisible=%u action=ignore",
+                          (void*)sink, (void*)wl_simple_shell, (unsigned)sink->surfaceId, (unsigned)surfaceId,
+                          name ? name : "(null)", sink->show, sink->visible, (unsigned)visible);
+      }
+      return;
+   }
    if ( sink->show )
    {
       if ( sink->visible != visible )
