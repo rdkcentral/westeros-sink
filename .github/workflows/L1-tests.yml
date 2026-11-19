@@ -1,0 +1,72 @@
+name: L1-tests
+
+on:
+  workflow_call:
+    inputs:
+      caller_source:
+        description: "Specifies the source type for the workflow."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  westeros-sink-l1:
+    name: Westeros sink L1 tests and coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install L1 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            libwayland-dev \
+            libgtest-dev \
+            lcov
+
+      - name: Verify coverage tool versions
+        run: |
+          lcov_version="$(lcov --version)"
+          geninfo_version="$(geninfo --version)"
+          printf '%s\n' "$lcov_version" "$geninfo_version"
+          printf '%s\n' "$lcov_version" | grep -Eq 'LCOV version 2\.' &&
+            printf '%s\n' "$geninfo_version" | grep -Eq 'LCOV version 2\.' || {
+            echo "Expected compatible lcov and geninfo 2.x versions"
+            exit 1
+          }
+
+      - name: Configure coverage build
+        run: |
+          cmake -S . -B build-l1 \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENABLE_COVERAGE=ON
+
+      - name: Build L1 tests
+        run: cmake --build build-l1 --target test_westeros_sink_l1 --parallel "$(nproc)"
+
+      - name: Run Westeros sink L1 tests
+        run: ctest --test-dir build-l1 -L WesterosSink --output-on-failure
+
+      - name: Generate sink coverage report
+        run: cmake --build build-l1 --target coverage-westeros-sink --parallel
+
+      - name: Upload L1 coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-L1-westeros-sink
+          path: |
+            build-l1/coverage_html_westeros_sink/
+            build-l1/coverage_westeros_sink_filtered.info
+            build-l1/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 30

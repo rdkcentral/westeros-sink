@@ -1900,11 +1900,6 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    startSettings.smoothResolutionChange= TRUE;
    startSettings.maxWidth= sink->maxWidth;
    startSettings.maxHeight= sink->maxHeight;
-   if ( sink->soc.usePip )
-   {
-      startSettings.maxWidth= MAX_PIP_HEIGHT;
-      startSettings.maxHeight= MAX_PIP_WIDTH;
-   }
 
    rc= NEXUS_SimpleVideoDecoder_SetStcChannel(sink->soc.videoDecoder, sink->soc.stcChannel);
    if ( rc != NEXUS_SUCCESS )

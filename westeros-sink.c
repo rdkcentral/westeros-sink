@@ -2111,7 +2111,16 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             }
             else
             {
-               gst_westeros_sink_soc_eos_event( sink );
+                passToDefault = (GST_STATE(sink) != GST_STATE_PLAYING) || (GST_STATE_PENDING(sink) != GST_STATE_VOID_PENDING);
+                if (!passToDefault)
+                {
+                    gst_westeros_sink_soc_eos_event(sink);
+                }
+                else
+                {
+                    GST_WARNING_OBJECT(sink, "EOS in state: %s and pending state: %s, pass event to basesink", gst_element_state_get_name(GST_STATE(sink)),
+                                       gst_element_state_get_name(GST_STATE_PENDING(sink)));
+                }
             }
          }
          break;
