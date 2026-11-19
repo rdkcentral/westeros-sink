@@ -7411,6 +7411,7 @@ capture_start:
                      "Performing decoder reset (%d/%d)",
                      sink->soc.decoderRetryCount,
                      MAX_DECODER_RETRIES);
+				postErrorMessage( (sink), GST_STREAM_ERROR_DECODE, "video decode error", description);
 				sink->soc.decoderResetNeeded = true;
 				pthread_mutex_unlock(&sink->soc.reset_lock);
 				GST_ERROR("Going to et new video decode start time\n");
