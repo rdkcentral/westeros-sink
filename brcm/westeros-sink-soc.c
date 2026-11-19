@@ -26,6 +26,7 @@
 #include <sys/time.h>
 
 #include "westeros-sink.h"
+#include <dlfcn.h>
 
 #if ((NEXUS_PLATFORM_VERSION_MAJOR >= 18) || (NEXUS_PLATFORM_VERSION_MAJOR >= 17 && NEXUS_PLATFORM_VERSION_MINOR >= 3))
 #include <gst/video/video-color.h>
@@ -149,6 +150,9 @@ static gboolean queryPeerHandles(GstWesterosSink *sink);
 static void postErrorMessage( GstWesterosSink *sink, int errorCode, const char *errorText );
 static gpointer captureThread(gpointer data);
 static void processFrame( GstWesterosSink *sink );
+static void stopSessionCapture( GstWesterosSink *sink );
+static gboolean captureConnect( GstWesterosSink *sink );
+static void captureDisconnect( GstWesterosSink *sink );
 static void updateVideoStatus( GstWesterosSink *sink );
 static void firstPtsCallback( void *userData, int n );
 static void underflowCallback( void *userData, int n );
@@ -861,6 +865,13 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.sb= 0;
    sink->soc.activeBuffers= 0;
+   sink->soc.captureSession= NULL;
+   sink->soc.captureSessionEnabled= FALSE;
+   sink->soc.captureSessionConnected= FALSE;
+   sink->soc.captureLibrary= NULL;
+   sink->soc.captureBridge= NULL;
+   sink->soc.captureExt= NULL;
+   sink->soc.captureLink= NULL;
    sink->soc.captureEnabled= FALSE;
    sink->soc.presentationStarted= FALSE;
    sink->soc.surfaceClientId= 0;
@@ -980,6 +991,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 {
+   stopSessionCapture( sink );
+   captureDisconnect( sink );
    NxClient_Uninit(); 
 }
 
@@ -1145,6 +1158,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eHoldUntilTsmLock;
                NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
 
+               stopSessionCapture( sink );
                NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
 
                sink->videoStarted= FALSE;
@@ -1392,6 +1406,112 @@ void gst_westeros_sink_soc_registryHandleGlobalRemove( GstWesterosSink *sink,
    WESTEROS_UNUSED(name);
 }
 
+gboolean gst_westeros_sink_soc_set_capture_session( GstWesterosSink *sink, void *session )
+{
+   if ( !session )
+   {
+      GST_ERROR_OBJECT(sink, "capture session must not be null");
+      return FALSE;
+   }
+   if ( sink->soc.captureSessionEnabled )
+   {
+      if ( sink->soc.captureSession == session )
+      {
+         return TRUE;
+      }
+      GST_ERROR_OBJECT(sink, "capture session already set; replacement is not allowed");
+      return FALSE;
+   }
+   if ( GST_STATE(sink) != GST_STATE_NULL || GST_STATE_PENDING(sink) != GST_STATE_VOID_PENDING )
+   {
+      GST_ERROR_OBJECT(sink, "rdk-capture-session must be set before NULL->READY");
+      return FALSE;
+   }
+   sink->soc.captureSession= session;
+   sink->soc.captureSessionEnabled= TRUE;
+   GST_INFO_OBJECT(sink, "capture session %p accepted", session);
+   return TRUE;
+}
+
+/* The decoder delivers frames to the session itself (buffer mode), so the prerolled
+ * buffer needs no explicit publication; the bridge call keeps the sequence the same
+ * as for the other backends. */
+void gst_westeros_sink_soc_capture_preroll( GstWesterosSink *sink, GstBuffer *buffer )
+{
+   if ( sink->soc.captureLink )
+   {
+      sink->soc.captureBridge->publish( sink->soc.captureLink, buffer );
+   }
+}
+
+/* NULL->READY: load the capture library and associate the session with this sink through
+ * the library's private bridge. */
+static gboolean captureConnect( GstWesterosSink *sink )
+{
+   const char *libName= getenv( RDK_CAPTURE_LIBRARY_ENV );
+   RdkCaptureSinkBridgeGetter getBridge;
+   BrcmCaptureExtGetter getExt;
+   const RdkCaptureSinkBridge *bridge= NULL;
+   const BrcmCaptureExt *ext= NULL;
+
+   if ( !libName )
+   {
+      libName= BRCM_CAPTURE_DEFAULT_LIBRARY;
+   }
+   sink->soc.captureLibrary= dlopen( libName, RTLD_NOW | RTLD_LOCAL );
+   if ( !sink->soc.captureLibrary )
+   {
+      GST_ERROR_OBJECT(sink, "capture library %s unavailable: %s", libName, dlerror());
+      return FALSE;
+   }
+   getBridge= (RdkCaptureSinkBridgeGetter)dlsym( sink->soc.captureLibrary, RDK_CAPTURE_SINK_BRIDGE_SYMBOL );
+   getExt= (BrcmCaptureExtGetter)dlsym( sink->soc.captureLibrary, BRCM_CAPTURE_EXT_SYMBOL );
+   bridge= getBridge ? getBridge() : NULL;
+   ext= getExt ? getExt() : NULL;
+   if ( !bridge || bridge->version != RDK_CAPTURE_SINK_BRIDGE_VERSION ||
+        !ext || ext->version != BRCM_CAPTURE_EXT_VERSION )
+   {
+      GST_ERROR_OBJECT(sink, "capture library %s is incompatible (bridge %p ext %p)", libName, bridge, ext);
+      goto rollback;
+   }
+   sink->soc.captureLink= bridge->connect( sink->soc.captureSession, GST_ELEMENT(sink) );
+   if ( !sink->soc.captureLink )
+   {
+      GST_ERROR_OBJECT(sink, "capture session %p was rejected by %s", sink->soc.captureSession, libName);
+      goto rollback;
+   }
+   sink->soc.captureBridge= bridge;
+   sink->soc.captureExt= ext;
+   sink->soc.captureSessionConnected= TRUE;
+   GST_INFO_OBJECT(sink, "capture session %p connected", sink->soc.captureSession);
+   return TRUE;
+
+rollback:
+   dlclose( sink->soc.captureLibrary );
+   sink->soc.captureLibrary= NULL;
+   return FALSE;
+}
+
+/* READY->NULL: stop publication.  The session keeps the final selection and retained
+ * frames for the MW. */
+static void captureDisconnect( GstWesterosSink *sink )
+{
+   if ( sink->soc.captureLink )
+   {
+      sink->soc.captureBridge->disconnect( sink->soc.captureLink );
+      sink->soc.captureLink= NULL;
+      GST_INFO_OBJECT(sink, "capture session %p disconnected", sink->soc.captureSession);
+   }
+   sink->soc.captureSessionConnected= FALSE;
+   sink->soc.captureBridge= NULL;
+   sink->soc.captureExt= NULL;
+   if ( sink->soc.captureLibrary )
+   {
+      dlclose( sink->soc.captureLibrary );
+      sink->soc.captureLibrary= NULL;
+   }
+}
+
 gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
    gboolean result= FALSE;
@@ -1402,6 +1522,15 @@ gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *p
    if ( sinkAcquireResources( sink ) )
    {
       result= TRUE;
+      if ( sink->soc.captureSessionEnabled )
+      {
+         if ( !captureConnect( sink ) )
+         {
+            GST_ERROR("gst_westeros_sink_null_to_ready: capture session connect failed");
+            sinkReleaseResources( sink );
+            result= FALSE;
+         }
+      }
    }
    else
    {
@@ -1588,6 +1717,8 @@ gboolean gst_westeros_sink_soc_paused_to_ready( GstWesterosSink *sink, gboolean 
    WESTEROS_UNUSED(passToDefault);
 
    GST_DEBUG("sink_soc_paused_to_ready");
+   /* Stop the session before the decoder is stopped (also done by sinkSocStopVideo) */
+   stopSessionCapture( sink );
    sinkSocStopVideo( sink );
    
    return TRUE;
@@ -1598,6 +1729,8 @@ gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *p
    *passToDefault= false;
 
    GST_DEBUG("sink_soc_ready_to_null");
+   stopSessionCapture( sink );
+   captureDisconnect( sink );
    sinkSocStopVideo( sink );
 
    freeCaptureSurfaces(sink);
@@ -1827,7 +1960,11 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 
 
    // Drop frames pending for display
-   if ( sink->soc.captureThread )
+   if ( sink->soc.captureSessionConnected )
+   {
+      sink->soc.captureBridge->invalidateSelection( sink->soc.captureLink );
+   }
+   else if ( sink->soc.captureThread )
    {
        NEXUS_SimpleVideoDecoderCaptureStatus captureStatus;
        NEXUS_SurfaceHandle captureSurface= NULL;
@@ -1897,6 +2034,22 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    startSettings.settings.prerollRate= 1;
 #endif
    startSettings.displayEnabled= true;
+   if ( sink->soc.captureSessionConnected )
+   {
+      /* Configure the decoder for capture, not for display: the decoder writes only into
+       * buffers owned by the capture session and its video never reaches the HW display */
+      NEXUS_VideoDecoderSettings decoderSettings;
+      NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &decoderSettings);
+      decoderSettings.bufferMode= true;
+      rc= NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &decoderSettings);
+      if ( rc != NEXUS_SUCCESS )
+      {
+         GST_ERROR("gst_westeros_sink_soc_start_video: unable to enable buffer mode: %d", (int)rc);
+         postDecodeError( sink );
+         goto exit;
+      }
+      startSettings.displayEnabled= false;
+   }
    startSettings.smoothResolutionChange= TRUE;
    startSettings.maxWidth= sink->maxWidth;
    startSettings.maxHeight= sink->maxHeight;
@@ -1923,6 +2076,18 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       sink->soc.presentationStarted= FALSE;
       sink->soc.frameCount= 0;
       sink->eosEventSeen= FALSE;
+   }
+   if ( sink->soc.captureSessionConnected )
+   {
+      /* The STC must be known before prepare: it is reconfigured there, ahead of decoder start */
+      sink->soc.captureExt->setStcChannel( sink->soc.captureLink, sink->soc.stcChannel );
+      /* Have the decoder's output events delivered from the start */
+      if ( !sink->soc.captureExt->prepareBufferCapture( sink->soc.captureLink, sink->soc.videoDecoder ) )
+      {
+         GST_ERROR("gst_westeros_sink_soc_start_video: capture session prepare failed");
+         postDecodeError( sink );
+         goto exit;
+      }
    }
    rc= NEXUS_SimpleVideoDecoder_Start(sink->soc.videoDecoder, &startSettings);
 
@@ -1960,6 +2125,17 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    if ( sink->soc.haveHardware && (sink->startPTS != 0) )
    {
       gst_westeros_sink_soc_set_startPTS( sink, sink->startPTS );
+   }
+
+   if ( sink->soc.captureSessionConnected )
+   {
+      if ( !sink->soc.captureExt->startBufferCapture( sink->soc.captureLink, sink->soc.videoDecoder ) )
+      {
+         GST_ERROR("gst_westeros_sink_soc_start_video: capture session start failed");
+         NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
+         postDecodeError( sink );
+         goto exit;
+      }
    }
 
    sink->soc.quitCaptureThread= FALSE;
@@ -2018,6 +2194,19 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
    if ( sendEOS )
    {
       gst_westeros_sink_eos_detected( sink );
+   }
+}
+
+/*
+ * With a capture session the decoder runs in buffer mode and the session owns its
+ * output buffers.  The session must be stopped before the decoder is stopped.
+ */
+static void stopSessionCapture( GstWesterosSink *sink )
+{
+   if ( sink->soc.captureSessionConnected )
+   {
+      sink->soc.captureExt->stopBufferCapture( sink->soc.captureLink );
+      sink->soc.captureExt->setStcChannel( sink->soc.captureLink, NULL );
    }
 }
 
@@ -2081,6 +2270,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
       NEXUS_VideoDecoderStreamInformation streamInfo;
       NEXUS_SimpleVideoDecoder_GetStreamInformation(sink->soc.videoDecoder, &streamInfo);
       #endif
+      stopSessionCapture( sink );
       NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
       #if ((NEXUS_PLATFORM_VERSION_MAJOR >= 18) || (NEXUS_PLATFORM_VERSION_MAJOR >= 17 && NEXUS_PLATFORM_VERSION_MINOR >= 3))
       NxClient_GetDisplaySettings(&displaySettings);
@@ -2620,6 +2810,14 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
 {
    if ( swIsSWDecode( sink ) )
    {
+      return;
+   }
+
+   if ( sink->soc.captureSessionConnected )
+   {
+      /* The decoder is already configured for capture (buffer mode); surface capture
+       * of the display path does not apply */
+      GST_WARNING_OBJECT(sink, "gst_westeros_sink_soc_set_video_path: ignoring gfx path with capture session");
       return;
    }
 
@@ -3749,6 +3947,7 @@ static gboolean processEventSinkSoc(GstWesterosSink *sink, GstPad *pad, GstEvent
                   {
                      sink->videoStarted= FALSE;
                      sink->soc.presentationStarted= FALSE;
+                     stopSessionCapture( sink );
                      NEXUS_SimpleVideoDecoder_Stop( sink->soc.videoDecoder );
                      sink->soc.frameCount= 0;
                      if ( !gst_westeros_sink_soc_start_video( sink ) )
@@ -4571,6 +4770,11 @@ static GstPadProbeReturn dataProbe( GstPad *pad, GstPadProbeInfo *info, gpointer
                     sink->flushStarted= TRUE;
                     UNLOCK( sink );
                     sink->soc.swPrerolled= false;
+                    /* Flush/seek removes the current capture selection; retained frames stay valid */
+                    if ( sink->soc.captureLink )
+                    {
+                       sink->soc.captureBridge->invalidateSelection( sink->soc.captureLink );
+                    }
                  }
                  break;
               case GST_EVENT_FLUSH_STOP:
@@ -4849,7 +5053,14 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
    connectSettings.simpleVideoDecoder[0].windowCapabilities.maxWidth= 1920;
    connectSettings.simpleVideoDecoder[0].windowCapabilities.maxHeight= 1080;
    #if (NEXUS_PLATFORM_VERSION_MAJOR>=16)
-   connectSettings.simpleVideoDecoder[0].decoderCapabilities.secureVideo= (sink->soc.secureVideo ? true : false);
+   if ( sink->soc.captureSessionEnabled && sink->soc.secureVideo )
+   {
+      /* Capture buffers are exported to graphics and must be unsecure, so the decoder must be too */
+      GST_WARNING_OBJECT(sink, "capture session in use: connecting the decoder as unsecure");
+      sink->soc.secureVideo= FALSE;
+   }
+   connectSettings.simpleVideoDecoder[0].decoderCapabilities.secureVideo=
+       (sink->soc.secureVideo ? NxClient_SecureDecoderMode_eSecure : NxClient_SecureDecoderMode_eUnsecure);
 
    NEXUS_VideoDecoderCapabilities videoDecoderCaps;
    NEXUS_GetVideoDecoderCapabilities(&videoDecoderCaps);
@@ -4860,8 +5071,9 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       {
          connectSettings.simpleVideoDecoder[0].decoderCapabilities.maxWidth= 3840;
          connectSettings.simpleVideoDecoder[0].decoderCapabilities.maxHeight= 2160;
-         connectSettings.simpleVideoDecoder[0].decoderCapabilities.colorDepth= 10;
-         connectSettings.simpleVideoDecoder[0].decoderCapabilities.feeder.colorDepth= 10;
+         unsigned maxColorDepth= sink->soc.captureSessionEnabled ? 8 : 10;
+         connectSettings.simpleVideoDecoder[0].decoderCapabilities.colorDepth= maxColorDepth;
+         connectSettings.simpleVideoDecoder[0].decoderCapabilities.feeder.colorDepth= maxColorDepth;
       }
    }
    else
@@ -4878,6 +5090,20 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       connectSettings.simpleVideoDecoder[0].windowCapabilities.type= NxClient_VideoWindowType_ePip;
       connectSettings.simpleVideoDecoder[0].windowCapabilities.maxWidth= MAX_PIP_WIDTH;
       connectSettings.simpleVideoDecoder[0].windowCapabilities.maxHeight= MAX_PIP_HEIGHT;
+   }
+   if ( sink->soc.captureSessionEnabled )
+   {
+      /* Buffer mode must be set before connecting: changing it on a connected decoder makes
+       * the simple decoder disconnect and reconnect it, which flushes its output buffers */
+      NEXUS_VideoDecoderSettings decoderSettings;
+      NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &decoderSettings);
+      decoderSettings.bufferMode= true;
+      decoderSettings.colorDepth= 8;
+      rc= NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &decoderSettings);
+      if ( rc != NEXUS_SUCCESS )
+      {
+         GST_ERROR("sinkAcquireVideo: unable to enable buffer mode before connect: %d", (int)rc);
+      }
    }
    rc= NxClient_Connect(&connectSettings, &sink->soc.connectId);
    GST_DEBUG("sinkAcquireVideo: NxClient_Connect rc %d connectId %d", rc, sink->soc.connectId);
@@ -4965,6 +5191,7 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
       if ( started )
       {
          GST_DEBUG("sinkReleaseVideo: stop decoder");
+         stopSessionCapture( sink );
          NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
       }
 

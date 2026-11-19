@@ -29,6 +29,12 @@
 
 #include "simplebuffer-client-protocol.h"
 
+/* SoC Video Frame Capture via the rdk-capture-session property.  The capture library is
+ * dlopen()ed and reached through RdkCaptureSinkBridge plus the Broadcom extension table. */
+#include "capture-sink-bridge.h"
+#include "capture-broadcom-ext.h"
+#define WESTEROS_SINK_SOC_HAVE_CAPTURE_SESSION 1
+
 #define WESTEROS_SINK_CAPS \
            "video/x-brcm-avd;"
 
@@ -158,6 +164,15 @@ struct _GstWesterosSinkSoc
 
    struct wl_sb *sb;
    int activeBuffers;
+
+   /* ICaptureSession support */
+   void *captureSession;             /* Borrowed ICaptureSession pointer */
+   gboolean captureSessionEnabled;   /* Whether capture session is active */
+   gboolean captureSessionConnected; /* Connected to session during NULL->READY */
+   void *captureLibrary;                       /* dlopen() handle of the capture library */
+   const RdkCaptureSinkBridge *captureBridge;  /* generic sink bridge */
+   const BrcmCaptureExt *captureExt;           /* Broadcom decoder extension */
+   RdkCaptureSinkLink *captureLink;            /* link returned by captureBridge->connect() */
 };
 
 void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass);
@@ -186,5 +201,7 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink );
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath );
 void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink );
 gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query );
+gboolean gst_westeros_sink_soc_set_capture_session( GstWesterosSink *sink, void *session );
+void gst_westeros_sink_soc_capture_preroll( GstWesterosSink *sink, GstBuffer *buffer );
 
 #endif
