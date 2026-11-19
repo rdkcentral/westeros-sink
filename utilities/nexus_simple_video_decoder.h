@@ -112,6 +112,7 @@ typedef enum NEXUS_VideoEotf {
 typedef enum NEXUS_SecureVideo {
     NEXUS_SecureVideo_eInsecure = 0,
     NEXUS_SecureVideo_eSecure,
+    NEXUS_SecureVideo_eBoth,
     NEXUS_SecureVideo_eMax
 } NEXUS_SecureVideo;
 
