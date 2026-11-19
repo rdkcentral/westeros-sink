@@ -104,6 +104,10 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
                                    sink->soc.videoOutputThread= temp; \
                                 }
 
+#define postDecodeError( sink, description ) \
+                                { \
+                                   postErrorMessage( (sink), GST_STREAM_ERROR_DECODE, "video decode error", description); \
+                                }
 enum
 {
   PROP_DEVICE= PROP_SOC_BASE,
@@ -7411,7 +7415,7 @@ capture_start:
                      "Performing decoder reset (%d/%d)",
                      sink->soc.decoderRetryCount,
                      MAX_DECODER_RETRIES);
-				postErrorMessage( (sink), GST_STREAM_ERROR_DECODE, "video decode error", description);
+				 postDecodeError( sink, "no output from decoder" );
 				sink->soc.decoderResetNeeded = true;
 				pthread_mutex_unlock(&sink->soc.reset_lock);
 				GST_ERROR("Going to et new video decode start time\n");
