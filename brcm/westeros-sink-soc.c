@@ -196,6 +196,41 @@ static const struct wl_sb_listener sbListener = {
 	sbFormat
 };
 
+/* Extra evidence a caller passes to sinkSocMetricsSample. With COUNTERS_ONLY the Nexus
+ * status counters decide everything: a decode-error or state-changed callback, the poll
+ * and the lifecycle hooks only request a read. UNDERFLOW_CALLBACK says the FIFO-empty
+ * callback fired. */
+#define WST_METRIC_SAMPLE_COUNTERS_ONLY (0U)
+#define WST_METRIC_SAMPLE_UNDERFLOW_CALLBACK (1U)
+
+/* Upper bound on bus messages one observation may expand to. */
+#define WST_METRIC_MAX_OCCURRENCES 1024
+
+typedef struct
+{
+   guint metric;
+   guint observation;
+   gint64 ptsNs;
+   gboolean hasDuration;
+   gboolean hasCount;
+   guint64 durationNs;
+   guint64 count;
+   guint64 messages;
+} GstWesterosSinkSocMetricMessage;
+
+static gboolean sinkSocResolveMetricEpisode( GstElement *element,
+   GstWesterosSinkSocMetricEpisode *episode, guint metric, gboolean withCount );
+static void sinkSocMetricsSampleLocked( GstWesterosSink *sink, guint evidence );
+static void sinkSocMetricsSample( GstWesterosSink *sink, guint evidence );
+static void sinkSocMetricsDecodeErrorCallback( void *context, int extra );
+static void sinkSocMetricsStateChangedCallback( void *context, int extra );
+static void sinkSocMetricsOutput( GstWesterosSink *sink, gboolean playing );
+static void sinkSocMetricsEnd( GstWesterosSink *sink, gboolean eos );
+static void sinkSocMetricsSetUnderflowEnabled( GstWesterosSink *sink, gboolean enabled );
+static void sinkSocMetricsAfterStart( GstWesterosSink *sink );
+static void sinkSocMetricsBeforeStop( GstWesterosSink *sink );
+static gboolean sinkSocMetricsDrain( GstWesterosSink *sink );
+
 void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass)
 {
    GObjectClass *gobject_class= (GObjectClass *) klass;
@@ -818,6 +853,11 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    NEXUS_Error rc;
    int i;
 
+   g_mutex_init(&sink->soc.metricMutex);
+   g_cond_init(&sink->soc.metricPublished);
+   g_queue_init(&sink->soc.metricMessages);
+   sink->soc.metricNormalPresentation= TRUE;
+   sink->soc.metricUnderflowEnabled= TRUE;
    sink->soc.captureWidth= -1;
    sink->soc.captureHeight= -1;
    sink->soc.captureWidthNext= DEFAULT_CAPTURE_WIDTH;
@@ -980,6 +1020,9 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 
 void gst_westeros_sink_soc_term( GstWesterosSink *sink )
 {
+   sinkSocMetricsDrain(sink);
+   g_cond_clear(&sink->soc.metricPublished);
+   g_mutex_clear(&sink->soc.metricMutex);
    NxClient_Uninit(); 
 }
 
@@ -1145,6 +1188,8 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eHoldUntilTsmLock;
                NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
 
+               sinkSocMetricsBeforeStop( sink );
+
                NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
 
                sink->videoStarted= FALSE;
@@ -1196,6 +1241,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
       case PROP_CAMERA_LATENCY:
          {
             sink->soc.useImmediateOutput= g_value_get_boolean(value);
+            sinkSocMetricsSetUnderflowEnabled( sink, !sink->soc.useImmediateOutput );
             if ( sink->soc.haveHardware )
             {
                updateVideoDecoderSettings( sink );
@@ -1544,6 +1590,7 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
 
 gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
+   sinkSocMetricsOutput(sink, FALSE);
    LOCK(sink);
    sink->soc.videoPlaying = FALSE;
    UNLOCK(sink);
@@ -1726,7 +1773,9 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
             if ( pts45k == 0 )
             {
                GST_DEBUG("Flushing Decoder, will clear _SetStartPts");
+               sinkSocMetricsBeforeStop( sink );
                NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
+               sinkSocMetricsAfterStart( sink );
                sink->soc.lastStartPts45k= 0;
             }
             else
@@ -1793,7 +1842,9 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
       GST_DEBUG("channelChangeMode %d setting %d", settings.channelChangeMode, NEXUS_VideoDecoder_ChannelChangeMode_eMute);
       settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eMute;
       NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
+      sinkSocMetricsBeforeStop( sink );
       NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
+      sinkSocMetricsAfterStart( sink );
    }
    else
    {
@@ -1925,6 +1976,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       sink->eosEventSeen= FALSE;
    }
    rc= NEXUS_SimpleVideoDecoder_Start(sink->soc.videoDecoder, &startSettings);
+   sinkSocMetricsAfterStart( sink );
 
    #define OOM_RETRY_SLEEP_MS (10)  /* on platforms sharing HPA with kernel, might need to retry a few times to get the memory from kernel */
    #define OOM_RETRY_NUM (25)       /* retry for 250ms, normally will succeed 50-100ms */
@@ -1934,6 +1986,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
 //      GST_DEBUG("gst_westeros_sink_soc_start_video: NEXUS_SimpleVideoDecoder_Start failed: %d tries %d", (int)rc, tries);
       usleep(OOM_RETRY_SLEEP_MS*1000);
       rc= NEXUS_SimpleVideoDecoder_Start(sink->soc.videoDecoder, &startSettings);
+      sinkSocMetricsAfterStart( sink );
       if ( rc == NEXUS_SUCCESS )
       {
          GST_WARNING("gst_westeros_sink_soc_start_video: NEXUS_SimpleVideoDecoder_Start succeeded on try %d ~%dms", OOM_RETRY_NUM-tries,  (OOM_RETRY_NUM-tries)*OOM_RETRY_SLEEP_MS);
@@ -2081,6 +2134,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
       NEXUS_VideoDecoderStreamInformation streamInfo;
       NEXUS_SimpleVideoDecoder_GetStreamInformation(sink->soc.videoDecoder, &streamInfo);
       #endif
+      sinkSocMetricsBeforeStop( sink );
       NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
       #if ((NEXUS_PLATFORM_VERSION_MAJOR >= 18) || (NEXUS_PLATFORM_VERSION_MAJOR >= 17 && NEXUS_PLATFORM_VERSION_MINOR >= 3))
       NxClient_GetDisplaySettings(&displaySettings);
@@ -2131,6 +2185,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
    sink->soc.emitDecodeError= FALSE;
    sink->soc.decodeError= FALSE;
    UNLOCK( sink );
+   sinkSocMetricsDrain(sink);
 }
 
 static gboolean allocCaptureSurfaces( GstWesterosSink *sink )
@@ -2618,6 +2673,10 @@ static gpointer captureThread(gpointer data)
 
 void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPath )
 {
+   g_mutex_lock(&sink->soc.metricMutex);
+   sink->soc.metricNormalPresentation= !useGfxPath;
+   g_mutex_unlock(&sink->soc.metricMutex);
+
    if ( swIsSWDecode( sink ) )
    {
       return;
@@ -2850,6 +2909,7 @@ static void processFrame( GstWesterosSink *sink )
 
 static void updateVideoStatus( GstWesterosSink *sink )
 {
+   sinkSocMetricsSample(sink, WST_METRIC_SAMPLE_COUNTERS_ONLY);
    NEXUS_VideoDecoderStatus videoStatus;
    gboolean haveHardware= FALSE;
    gboolean checkForEOS= FALSE;
@@ -3351,6 +3411,7 @@ static void underflowCallback( void *userData, int n )
    NEXUS_VideoDecoderStatus videoStatus;
    WESTEROS_UNUSED(n);
 
+   sinkSocMetricsSample(sink, WST_METRIC_SAMPLE_UNDERFLOW_CALLBACK);
    if ( sink->videoStarted )
    {
       rc= NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus);
@@ -3518,6 +3579,7 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
 {
    NEXUS_VideoDecoderTrickState trickState;
 
+   sinkSocMetricsOutput(sink, playing);
    GST_LOG("updateClientPlaySpeed: enter: clientPlaySpeed %f playing %d", clientPlaySpeed, playing);
    if ( !sink->videoStarted || sink->soc.serverPlaySpeed != 1.0 )
    {
@@ -3712,6 +3774,11 @@ static gboolean processEventSinkSoc(GstWesterosSink *sink, GstPad *pad, GstEvent
 {
    gboolean result= FALSE;
 
+   if ( GST_EVENT_TYPE(event) == GST_EVENT_EOS || GST_EVENT_TYPE(event) == GST_EVENT_STREAM_GROUP_DONE )
+   {
+      sinkSocMetricsEnd(sink, TRUE);
+   }
+
    LOCK( sink );
    if ( sink->startAfterLink && !sink->videoStarted && (!sink->rm || sink->resAssignedId >= 0) )
    {
@@ -3749,6 +3816,7 @@ static gboolean processEventSinkSoc(GstWesterosSink *sink, GstPad *pad, GstEvent
                   {
                      sink->videoStarted= FALSE;
                      sink->soc.presentationStarted= FALSE;
+                     sinkSocMetricsBeforeStop( sink );
                      NEXUS_SimpleVideoDecoder_Stop( sink->soc.videoDecoder );
                      sink->soc.frameCount= 0;
                      if ( !gst_westeros_sink_soc_start_video( sink ) )
@@ -4737,6 +4805,13 @@ static void updateVideoDecoderSettings( GstWesterosSink *sink )
    settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eMute;  // mute until TSM to prevent display in paused/framestep case, NF VPEEK
    settings.ptsOffset= sink->soc.ptsOffset;
    settings.fifoEmpty.callback= sink->soc.useImmediateOutput ? NULL : underflowCallback;
+   settings.fifoEmptyCallbackThreshold= 0;
+   settings.decodeError.callback= sinkSocMetricsDecodeErrorCallback;
+   settings.decodeError.context= sink;
+   settings.stateChanged.callback.callback= sinkSocMetricsStateChangedCallback;
+   settings.stateChanged.callback.context= sink;
+   settings.stateChanged.enabled.pictureRepeated= true;
+   settings.stateChanged.enabled.fifoNoLongerEmpty= true;
    settings.fifoEmpty.context= sink;
    settings.firstPts.callback= firstPtsCallback;
    settings.firstPts.context= sink;
@@ -4965,6 +5040,7 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
       if ( started )
       {
          GST_DEBUG("sinkReleaseVideo: stop decoder");
+         sinkSocMetricsBeforeStop( sink );
          NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
       }
 
@@ -4980,6 +5056,12 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
       if ( sink->soc.videoDecoder )
       {
          GST_DEBUG("sinkReleaseVideo: release decoder");
+         NEXUS_VideoDecoderSettings settings;
+         NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &settings);
+         settings.decodeError.callback= NULL;
+         settings.stateChanged.callback.callback= NULL;
+         settings.fifoEmpty.callback= NULL;
+         NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
          NEXUS_SimpleVideoDecoder_Release(sink->soc.videoDecoder);
          sink->soc.videoDecoder= 0;
       }
@@ -5041,6 +5123,8 @@ static int sinkAcquireResources( GstWesterosSink *sink )
 
 static void sinkReleaseResources( GstWesterosSink *sink )
 {
+   sinkSocMetricsEnd(sink, TRUE);
+
    if ( sink->soc.surfaceClientId != 0 )
    {
       sinkReleaseVideo( sink );
@@ -5054,12 +5138,404 @@ static void sinkReleaseResources( GstWesterosSink *sink )
       sink->soc.surfaceClientId= 0;
       NxClient_Free(&sink->soc.allocSurface);
    }
+   sinkSocMetricsDrain(sink);
 }
 
 static GstStructure *wstSinkGetStats( GstWesterosSink * sink )
 {
+   GstStructure *stats;
+
    g_return_val_if_fail (sink != NULL, NULL);
-   return gst_structure_new ("application/x-gst-base-sink-stats",
-      "dropped", G_TYPE_UINT64, (guint64)sink->soc.numDropped,
-      "rendered", G_TYPE_UINT64, (guint64)sink->soc.numDecoded, NULL);
+   g_mutex_lock(&sink->soc.metricMutex);
+   if ( !sink->soc.metricNormalPresentation )
+   {
+      g_mutex_unlock(&sink->soc.metricMutex);
+      return NULL;
+   }
+   stats= gst_structure_new("media-pipeline-stats",
+      "rendered", G_TYPE_UINT64, sink->soc.metricRendered,
+      "dropped", G_TYPE_UINT64, sink->soc.metricDropped,
+      "corrupted", G_TYPE_UINT64, sink->soc.metricCorrupted, NULL);
+   g_mutex_unlock(&sink->soc.metricMutex);
+   return stats;
+}
+
+static void sinkSocMetricsPublish( GstElement *element, gpointer data )
+{
+   GstWesterosSink *sink= (GstWesterosSink *)element;
+   GstWesterosSinkSocMetricMessage *pending;
+
+   (void)data;
+   g_mutex_lock(&sink->soc.metricMutex);
+   sink->soc.metricPublishThread= g_thread_self();
+   while ( (pending= g_queue_pop_head(&sink->soc.metricMessages)) != NULL )
+   {
+      guint64 i;
+
+      g_mutex_unlock(&sink->soc.metricMutex);
+      for ( i= 0; i < pending->messages; ++i )
+      {
+         GstStructure *structure= gst_structure_new("media-pipeline-metric",
+            "metric", G_TYPE_UINT, pending->metric,
+            "observation-kind", G_TYPE_UINT, pending->observation, NULL);
+         GstMessage *message;
+
+         if ( pending->hasDuration )
+         {
+            gst_structure_set(structure, "duration-ns", G_TYPE_UINT64, pending->durationNs, NULL);
+         }
+         if ( pending->hasCount )
+         {
+            gst_structure_set(structure, "count", G_TYPE_UINT64, pending->count, NULL);
+         }
+         if ( pending->ptsNs >= 0 )
+         {
+            gst_structure_set(structure, "pts-ns", G_TYPE_INT64, pending->ptsNs, NULL);
+         }
+         message= gst_message_new_element(GST_OBJECT(element), structure);
+         if ( !gst_element_post_message(element, message) )
+         {
+            GST_WARNING_OBJECT(element, "Failed to post media metric %u/%u",
+               pending->metric, pending->observation);
+         }
+      }
+      g_free(pending);
+      g_mutex_lock(&sink->soc.metricMutex);
+   }
+   sink->soc.metricPublishThread= NULL;
+   sink->soc.metricPublishScheduled= FALSE;
+   g_cond_broadcast(&sink->soc.metricPublished);
+   g_mutex_unlock(&sink->soc.metricMutex);
+}
+
+static gboolean sinkSocQueueMetric( GstElement *element, guint metric, guint observation,
+                                           gint64 ptsNs, gboolean hasDuration, guint64 durationNs,
+                                           gboolean hasCount, guint64 count, guint64 messages )
+{
+   GstWesterosSink *sink= (GstWesterosSink *)element;
+   GstWesterosSinkSocMetricMessage *pending;
+
+   if ( !messages )
+   {
+      return TRUE;
+   }
+   if ( messages > WST_METRIC_MAX_OCCURRENCES )
+   {
+      GST_WARNING_OBJECT(element, "Capping %" G_GUINT64_FORMAT " messages of metric %u/%u to %u",
+         messages, metric, observation, WST_METRIC_MAX_OCCURRENCES);
+      messages= WST_METRIC_MAX_OCCURRENCES;
+   }
+   pending= g_new(GstWesterosSinkSocMetricMessage, 1);
+   pending->metric= metric;
+   pending->observation= observation;
+   pending->ptsNs= ptsNs;
+   pending->hasDuration= hasDuration;
+   pending->durationNs= durationNs;
+   pending->hasCount= hasCount;
+   pending->count= count;
+   pending->messages= messages;
+   g_queue_push_tail(&sink->soc.metricMessages, pending);
+   if ( !sink->soc.metricPublishScheduled )
+   {
+      sink->soc.metricPublishScheduled= TRUE;
+      gst_element_call_async(element, sinkSocMetricsPublish, NULL, NULL);
+   }
+   return TRUE;
+}
+
+static gboolean sinkSocMetricsDrain( GstWesterosSink *sink )
+{
+   g_mutex_lock(&sink->soc.metricMutex);
+   if ( sink->soc.metricPublishThread == g_thread_self() )
+   {
+      /* A sync handler must not wait for its own message to finish posting. */
+      g_mutex_unlock(&sink->soc.metricMutex);
+      return FALSE;
+   }
+   while ( sink->soc.metricPublishScheduled )
+   {
+      g_cond_wait(&sink->soc.metricPublished, &sink->soc.metricMutex);
+   }
+   if ( !g_queue_is_empty(&sink->soc.metricMessages) )
+   {
+      gpointer leftover;
+
+      GST_ERROR_OBJECT(sink, "metric queue not empty after drain; discarding");
+      while ( (leftover= g_queue_pop_head(&sink->soc.metricMessages)) != NULL )
+      {
+         g_free(leftover);
+      }
+   }
+   g_mutex_unlock(&sink->soc.metricMutex);
+   return TRUE;
+}
+
+static gboolean sinkSocQueueMetricOccurrences( GstElement *element, guint metric,
+                                                      guint64 occurrences, gint64 ptsNs )
+{
+   return sinkSocQueueMetric(element, metric, GST_SOC_METRIC_OCCURRENCE,
+      ptsNs, FALSE, 0, FALSE, 0, occurrences);
+}
+
+static gboolean sinkSocStartMetricEpisode( GstElement *element,
+                                                  GstWesterosSinkSocMetricEpisode *episode,
+                                                  guint metric, gint64 ptsNs )
+{
+   g_return_val_if_fail (episode != NULL, FALSE);
+   if ( episode->active )
+   {
+      return FALSE;
+   }
+   episode->active= TRUE;
+   episode->started_ns= gst_util_get_timestamp();
+   episode->count= 0;
+   episode->pts_ns= ptsNs;
+   return sinkSocQueueMetric(element, metric, GST_SOC_METRIC_EPISODE_STARTED,
+      ptsNs, FALSE, 0, FALSE, 0, 1);
+}
+
+static gboolean sinkSocResolveMetricEpisode( GstElement *element,
+                                                    GstWesterosSinkSocMetricEpisode *episode,
+                                                    guint metric, gboolean withCount )
+{
+   guint64 nowNs;
+   guint64 durationNs;
+   gboolean queued;
+
+   g_return_val_if_fail (episode != NULL, FALSE);
+   if ( !episode->active )
+   {
+      return FALSE;
+   }
+   nowNs= gst_util_get_timestamp();
+   durationNs= (nowNs >= episode->started_ns) ? nowNs-episode->started_ns : 0;
+   queued= sinkSocQueueMetric(element, metric, GST_SOC_METRIC_EPISODE_RESOLVED,
+      episode->pts_ns, TRUE, durationNs, withCount, episode->count, 1);
+   episode->active= FALSE;
+   episode->count= 0;
+   episode->started_ns= 0;
+   episode->pts_ns= -1;
+   return queued;
+}
+
+static void sinkSocResetMetricCounter( GstWesterosSinkSocMetricCounter *counter )
+{
+   counter->previous= 0;
+}
+
+static guint64 sinkSocTakeMetricCounter( GstWesterosSinkSocMetricCounter *counter, guint32 value )
+{
+   guint32 delta= value-counter->previous;
+
+   counter->previous= value;
+   if ( delta > G_MAXINT32 )
+   {
+      GST_WARNING("Unexpected media counter reset; rebase without false occurrences");
+      return 0;
+   }
+   return delta;
+}
+
+static void sinkSocMetricsSetUnderflowEnabled( GstWesterosSink *sink, gboolean enabled )
+{
+   g_mutex_lock(&sink->soc.metricMutex);
+   if ( !enabled )
+   {
+      sinkSocResolveMetricEpisode(GST_ELEMENT(sink), &sink->soc.metricUnderflow,
+         GST_SOC_METRIC_BUFFER_UNDERFLOW, FALSE);
+   }
+   sink->soc.metricUnderflowEnabled= enabled;
+   g_mutex_unlock(&sink->soc.metricMutex);
+}
+
+static void sinkSocMetricsSampleLocked( GstWesterosSink *sink, guint evidence )
+{
+   NEXUS_VideoDecoderStatus status;
+   guint64 rendered;
+   guint64 drops;
+   guint64 errors;
+   guint64 repeats;
+   guint64 fifoEmpty;
+   gint64 pts= -1;
+
+   if ( !sink->soc.videoDecoder || (!sink->soc.metricActive && !sink->soc.metricStartPending) )
+   {
+      return;
+   }
+   if ( NEXUS_SimpleVideoDecoder_GetStatus(sink->soc.videoDecoder, &status) != NEXUS_SUCCESS )
+   {
+      return;
+   }
+   if ( !sink->soc.metricActive )
+   {
+      /* AfterStart could not read the status, so it is read now */
+      sink->soc.metricStartPending= FALSE;
+      if ( !status.started )
+      {
+         return;
+      }
+      sink->soc.metricActive= TRUE;
+   }
+   if ( status.ptsType != NEXUS_PtsType_eInterpolatedFromInvalidPTS )
+   {
+      pts= gst_util_uint64_scale(status.pts, GST_SECOND, 45000);
+   }
+
+   /* stats.rendered = numDisplayed */
+   rendered= sinkSocTakeMetricCounter(&sink->soc.metricDisplayed, status.numDisplayed);
+   sink->soc.metricRendered += rendered;
+
+   /* [1] Video frame drop = numDecodeDrops + numDecodeInputErrors + numDisplayDrops.
+    * Reported without any state condition, as NRD 10 onError(302). */
+   drops= sinkSocTakeMetricCounter(&sink->soc.metricDecodeDrops, status.numDecodeDrops);
+   drops += sinkSocTakeMetricCounter(&sink->soc.metricInputErrors, status.numDecodeInputErrors);
+   if ( sink->soc.metricNormalPresentation )
+   {
+      drops += sinkSocTakeMetricCounter(&sink->soc.metricDisplayDrops, status.numDisplayDrops);
+   }
+   if ( drops )
+   {
+      sink->soc.metricDropped += drops;
+      sinkSocQueueMetricOccurrences(GST_ELEMENT(sink),
+         GST_SOC_METRIC_VIDEO_FRAME_DROP, drops, pts);
+   }
+
+   /* [3] Video decode error = numDecodeErrors + numDisplayErrors */
+   errors= sinkSocTakeMetricCounter(&sink->soc.metricErrors, status.numDecodeErrors);
+   if ( sink->soc.metricNormalPresentation )
+   {
+      errors += sinkSocTakeMetricCounter(&sink->soc.metricDisplayErrors, status.numDisplayErrors);
+   }
+   sink->soc.metricCorrupted += errors;
+   if ( errors )
+   {
+      sinkSocQueueMetricOccurrences(GST_ELEMENT(sink),
+         GST_SOC_METRIC_VIDEO_DECODE_ERROR, errors, pts);
+   }
+
+   /* [5] Video frame repeat = numPicturesRepeated.*/
+   repeats= sinkSocTakeMetricCounter(&sink->soc.metricRepeats, status.numPicturesRepeated);
+   if ( sink->soc.metricRepeat.active && rendered )
+   {
+      sinkSocResolveMetricEpisode(GST_ELEMENT(sink),
+         &sink->soc.metricRepeat, GST_SOC_METRIC_VIDEO_FRAME_REPEAT, TRUE);
+   }
+   if ( repeats )
+   {
+      sinkSocStartMetricEpisode(GST_ELEMENT(sink),
+         &sink->soc.metricRepeat, GST_SOC_METRIC_VIDEO_FRAME_REPEAT, pts);
+      sink->soc.metricRepeat.count += repeats;
+   }
+
+   fifoEmpty= sinkSocTakeMetricCounter(&sink->soc.metricFifoEmpty, status.fifoEmptyEvents);
+   /* The callback is evidence only while the FIFO is still empty. One that arrives after
+    * polling reported both the empty and the recovery must not start another episode. */
+   if ( sink->soc.metricUnderflowEnabled &&
+        (((evidence & WST_METRIC_SAMPLE_UNDERFLOW_CALLBACK) &&
+          status.fifoEmptyEvents > status.fifoNoLongerEmptyEvents) || fifoEmpty) &&
+        !sink->soc.metricEos && status.numDisplayed > 0 )
+   {
+      sinkSocStartMetricEpisode(GST_ELEMENT(sink),
+         &sink->soc.metricUnderflow, GST_SOC_METRIC_BUFFER_UNDERFLOW, pts);
+   }
+   if ( sink->soc.metricUnderflow.active &&
+        status.fifoNoLongerEmptyEvents > 0 &&
+        status.fifoNoLongerEmptyEvents >= status.fifoEmptyEvents )
+   {
+      sinkSocResolveMetricEpisode(GST_ELEMENT(sink),
+         &sink->soc.metricUnderflow, GST_SOC_METRIC_BUFFER_UNDERFLOW, FALSE);
+   }
+}
+
+static void sinkSocMetricsSample( GstWesterosSink *sink, guint evidence )
+{
+   g_mutex_lock(&sink->soc.metricMutex);
+   sinkSocMetricsSampleLocked(sink, evidence);
+   g_mutex_unlock(&sink->soc.metricMutex);
+}
+
+static void sinkSocMetricsDecodeErrorCallback( void *context, int extra )
+{
+   (void)extra;
+   sinkSocMetricsSample((GstWesterosSink *)context, WST_METRIC_SAMPLE_COUNTERS_ONLY);
+}
+
+static void sinkSocMetricsStateChangedCallback( void *context, int extra )
+{
+   (void)extra;
+   /* pictureRepeated and fifoNoLongerEmpty share the Nexus state callback.*/
+   sinkSocMetricsSample((GstWesterosSink *)context, WST_METRIC_SAMPLE_COUNTERS_ONLY);
+}
+
+static void sinkSocMetricsResolveLocked( GstWesterosSink *sink )
+{
+   sinkSocResolveMetricEpisode(GST_ELEMENT(sink),
+      &sink->soc.metricRepeat, GST_SOC_METRIC_VIDEO_FRAME_REPEAT, TRUE);
+   sinkSocResolveMetricEpisode(GST_ELEMENT(sink),
+      &sink->soc.metricUnderflow, GST_SOC_METRIC_BUFFER_UNDERFLOW, FALSE);
+}
+
+static void sinkSocMetricsOutput( GstWesterosSink *sink, gboolean playing )
+{
+   g_mutex_lock(&sink->soc.metricMutex);
+   /* Sample first so nothing seen before the change is lost. Underflow is
+    * decoder-owned and remains active across an output-only pause. */
+   sinkSocMetricsSampleLocked(sink, WST_METRIC_SAMPLE_COUNTERS_ONLY);
+   /* An output pause ends the repeat episode. */
+   if ( !playing )
+   {
+      sinkSocResolveMetricEpisode(GST_ELEMENT(sink),
+         &sink->soc.metricRepeat, GST_SOC_METRIC_VIDEO_FRAME_REPEAT, TRUE);
+   }
+   g_mutex_unlock(&sink->soc.metricMutex);
+}
+
+static void sinkSocMetricsEnd( GstWesterosSink *sink, gboolean eos )
+{
+   g_mutex_lock(&sink->soc.metricMutex);
+   sinkSocMetricsSampleLocked(sink, WST_METRIC_SAMPLE_COUNTERS_ONLY);
+   sinkSocMetricsResolveLocked(sink);
+   sink->soc.metricEos= eos;
+   g_mutex_unlock(&sink->soc.metricMutex);
+}
+
+static void sinkSocMetricsAfterStart( GstWesterosSink *sink )
+{
+   NEXUS_VideoDecoderStatus status;
+
+   g_mutex_lock(&sink->soc.metricMutex);
+   sinkSocResetMetricCounter(&sink->soc.metricDisplayed);
+   sinkSocResetMetricCounter(&sink->soc.metricErrors);
+   sinkSocResetMetricCounter(&sink->soc.metricInputErrors);
+   sinkSocResetMetricCounter(&sink->soc.metricDecodeDrops);
+   sinkSocResetMetricCounter(&sink->soc.metricDisplayDrops);
+   sinkSocResetMetricCounter(&sink->soc.metricDisplayErrors);
+   sinkSocResetMetricCounter(&sink->soc.metricRepeats);
+   sinkSocResetMetricCounter(&sink->soc.metricFifoEmpty);
+   sink->soc.metricEos= FALSE;
+   sink->soc.metricActive= FALSE;
+   sink->soc.metricStartPending= FALSE;
+   if ( sink->soc.videoDecoder )
+   {
+      if ( NEXUS_SimpleVideoDecoder_GetStatus(sink->soc.videoDecoder, &status) == NEXUS_SUCCESS )
+      {
+         sink->soc.metricActive= status.started;
+      }
+      else
+      {
+         /* Not known, the next sample reads the status again. */
+         sink->soc.metricStartPending= TRUE;
+      }
+   }
+   sinkSocMetricsSampleLocked(sink, WST_METRIC_SAMPLE_COUNTERS_ONLY);
+   g_mutex_unlock(&sink->soc.metricMutex);
+}
+
+static void sinkSocMetricsBeforeStop( GstWesterosSink *sink )
+{
+   sinkSocMetricsEnd(sink, TRUE);
+   g_mutex_lock(&sink->soc.metricMutex);
+   sink->soc.metricActive= FALSE;
+   sink->soc.metricStartPending= FALSE;
+   g_mutex_unlock(&sink->soc.metricMutex);
 }
