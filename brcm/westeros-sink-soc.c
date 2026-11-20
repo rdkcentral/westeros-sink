@@ -153,6 +153,8 @@ enum
 #define METRIC_FRAME_DROP_INTERVAL 100
 #define METRIC_FRAME_REPEAT_INTERVAL 80
 #define METRIC_DECODE_ERROR_INTERVAL 120
+#define METRIC_UNDERFLOW_POLL_INTERVAL 135
+#define METRIC_UNDERFLOW_HOLD_NS (1000ULL*1000000ULL)
 
 enum
 {
@@ -2558,6 +2560,8 @@ static void resetMetricEpisodes( GstWesterosSink *sink )
    sink->soc.metricUnderflowPts= 0;
    sink->soc.metricUnderflowStartNs= 0;
    sink->soc.metricUnderflowBytes= 0;
+   sink->soc.metricUnderflowPollCount= 0;
+   sink->soc.metricUnderflowPollDue= FALSE;
 }
 
 static void startPendingUnderflow( GstWesterosSink *sink )
@@ -2569,6 +2573,15 @@ static void startPendingUnderflow( GstWesterosSink *sink )
       postMetricEpisodeMessage( sink, METRIC_BUFFER_UNDERFLOW, METRIC_PHASE_STARTED,
                                 PTS45K_TO_NS(sink->soc.metricUnderflowPts), 0, 0 );
    }
+}
+
+static void beginUnderflowEpisode( GstWesterosSink *sink, guint pts, guint64 bytes, guint64 nowNs )
+{
+   sink->soc.metricUnderflowPending= TRUE;
+   sink->soc.metricUnderflowPts= pts;
+   sink->soc.metricUnderflowStartNs= nowNs;
+   sink->soc.metricUnderflowBytes= bytes;
+   startPendingUnderflow( sink );
 }
 
 static void resolveMetricEpisode( GstWesterosSink *sink, guint metricType, guint64 nowNs )
@@ -2606,9 +2619,19 @@ static void resolveMetricEpisodes( GstWesterosSink *sink, guint64 nowNs )
 
 static void updateUnderflowMetric( GstWesterosSink *sink, NEXUS_VideoDecoderStatus *videoStatus, guint64 nowNs )
 {
+   if ( sink->soc.metricUnderflowPollDue )
+   {
+      sink->soc.metricUnderflowPollDue= FALSE;
+      if ( sink->soc.presentationStarted && sink->soc.videoPlaying &&
+           !sink->soc.metricUnderflowActive && !sink->soc.metricUnderflowPending )
+      {
+         beginUnderflowEpisode( sink, videoStatus->pts, videoStatus->numBytesDecoded, nowNs );
+      }
+   }
    startPendingUnderflow( sink );
    if ( sink->soc.metricUnderflowActive &&
-        (videoStatus->fifoDepth > 0 || videoStatus->numBytesDecoded > sink->soc.metricUnderflowBytes) )
+        (videoStatus->fifoDepth > 0 || videoStatus->numBytesDecoded > sink->soc.metricUnderflowBytes) &&
+        (nowNs - sink->soc.metricUnderflowStartNs) >= METRIC_UNDERFLOW_HOLD_NS )
    {
       resolveMetricEpisode( sink, METRIC_BUFFER_UNDERFLOW, nowNs );
    }
@@ -3092,6 +3115,11 @@ static void updateVideoStatus( GstWesterosSink *sink )
    eosDetected= sink->eosDetected;
    videoPlaying= sink->soc.videoPlaying;
    flushStarted= sink->flushStarted;
+   if ( ++sink->soc.metricUnderflowPollCount >= METRIC_UNDERFLOW_POLL_INTERVAL )
+   {
+      sink->soc.metricUnderflowPollCount= 0;
+      sink->soc.metricUnderflowPollDue= TRUE;
+   }
    UNLOCK( sink );
 
    if ( haveHardware == FALSE )
@@ -3640,11 +3668,7 @@ static void underflowCallback( void *userData, int n )
             {
                if ( !sink->soc.metricUnderflowActive && !sink->soc.metricUnderflowPending )
                {
-                  sink->soc.metricUnderflowPending= TRUE;
-                  sink->soc.metricUnderflowPts= videoStatus.pts;
-                  sink->soc.metricUnderflowStartNs= (guint64)g_get_monotonic_time()*1000ULL;
-                  sink->soc.metricUnderflowBytes= videoStatus.numBytesDecoded;
-                  startPendingUnderflow( sink );
+                  beginUnderflowEpisode( sink, videoStatus.pts, videoStatus.numBytesDecoded, (guint64)g_get_monotonic_time()*1000ULL );
                }
                sink->soc.emitUnderflow= TRUE;
             }
