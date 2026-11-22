@@ -2,6 +2,26 @@
 
 All notable changes to westeros-sink are documented in this file.
 
+## [2.1.5] - 2026-11-17
+**Tag:** 2.1.5
+
+### Changed
+- BCM-2298: brcm: don't limit PIP decoder start settings to PIP window size
+- RDKEMW-13172: L1 test suite for Westeros-sink
+
+## [2.1.4] - 2026-10-13
+**Tag:** 2.1.4
+
+### Changed
+- Fix Westerossink critical warnings while playing raw video
+- Send EOS even during preroll
+
+## [2.1.3] - 2026-09-01
+**Tag:** 2.1.3
+
+### Changed
+- westeros defect fix, part2
+
 ## [2.1.2] - 2026-07-13
 **Tag:** 2.1.2
 
