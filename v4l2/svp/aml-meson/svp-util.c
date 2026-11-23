@@ -65,7 +65,8 @@ struct aml_vdec_cfg_infos
    uint32_t low_latency_mode;
    uint32_t uvm_hook_type;
    /*
-    * bit 20       : vframe source type flag. 1:dtv 0:others
+    * bit 31       : K5.15 vframe source type flag. 1:dtv 0:others
+    * bit 20       : K5.4/K4.9 vframe source type flag. 1:dtv 0:others
     * bit 16       : force progressive output flag.
     * bit 15       : enable nr.
     * bit 14       : enable di local buff.
@@ -342,6 +343,14 @@ static void wstSVPDecoderConfig( GstWesterosSink *sink )
    bool useExtConfig= false;
    int major= 0, minor= 0, patch= 0;
    struct utsname info;
+   int dtv_bit = 0;
+
+   if ( uname(&info) || sscanf(info.release, "%d.%d.%d", &major, &minor, &patch) < 2)
+   {
+      GST_DEBUG("get linux version failed");
+   }
+
+   GST_DEBUG("linux version %d.%d.%d", major, minor, patch);
 
    if ( sink->soc.useImmediateOutput )
    {
@@ -349,17 +358,22 @@ static void wstSVPDecoderConfig( GstWesterosSink *sink )
       decParm->cfg.low_latency_mode= 1;
    }
 
-   /*set bit20 value 1 ：receive vframe source type dtv
-    *set bit20 value 0 ：receive vframe source type others */
+   if ( (major == 4) || (major == 5 && minor < 15) )
+	   dtv_bit = 20;
+   else
+	   dtv_bit = 31;
+
+   /*set dtv_bit value 1 ：receive vframe source type dtv
+    *set dtv_bit value 0 ：receive vframe source type others */
    if ( sink->soc.isSourceDTV)
    {
       GST_DEBUG("receive vframe source type is dtv");
-      decParm->cfg.metadata_config_flag |= (1 << 20);
+      decParm->cfg.metadata_config_flag |= (1 << dtv_bit);
    }
    else
    {
       GST_DEBUG("receive vframe source type is others");
-      decParm->cfg.metadata_config_flag |= (0 << 20);
+      decParm->cfg.metadata_config_flag |= (0 << dtv_bit);
    }
 
    #ifdef P_STREAM_ENABLE_NR_DI
@@ -656,13 +670,6 @@ static void wstSVPDecoderConfig( GstWesterosSink *sink )
              decParm->hdr.color_parms.content_light_level.max_pic_average );
       }
    }
-
-   if ( uname(&info) || sscanf(info.release, "%d.%d.%d", &major, &minor, &patch) < 2)
-   {
-      GST_DEBUG("get linux version failed");
-   }
-
-   GST_DEBUG("linux version %d.%d.%d", major, minor, patch);
 
    useExtConfig= ((major > 5) || ((major == 5) && (minor >= 15))) ? true : false;
 
