@@ -8202,7 +8202,11 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
       unsigned char *data;
 
       data= (unsigned char*)mmap( NULL, swBuff->size0, PROT_READ | PROT_WRITE, MAP_SHARED, sink->soc.drmFd, swBuff->offset0 );
-      if ( data )
+      if ( data == MAP_FAILED )
+      {
+         GST_ERROR("swDisplay: mmap of Y plane failed: errno %d", errno);
+      }
+      else
       {
          int row;
          unsigned char *destRow= data;
@@ -8216,7 +8220,11 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
          munmap( data, swBuff->size0 );
       }
       data= (unsigned char*)mmap( NULL, swBuff->size1, PROT_READ | PROT_WRITE, MAP_SHARED, sink->soc.drmFd, swBuff->offset1 );
-      if ( data )
+      if ( data == MAP_FAILED )
+      {
+         GST_ERROR("swDisplay: mmap of UV plane failed: errno %d", errno);
+      }
+      else
       {
          int row, col;
          unsigned char *dest, *destRow= data;
