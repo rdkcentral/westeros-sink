@@ -860,6 +860,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevNumDecoded= 0;
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.sb= 0;
+   sink->soc.holePunchDone= false;
    sink->soc.activeBuffers= 0;
    sink->soc.captureEnabled= FALSE;
    sink->soc.presentationStarted= FALSE;
@@ -2046,6 +2047,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
    {
       wl_sb_destroy( sink->soc.sb );
       sink->soc.sb= 0;
+      sink->soc.holePunchDone= false;
    }
 
    #if (defined (ENABLE_DOLBYVISION) || defined (ENABLE_HDR10)) && (NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(17,3))
@@ -3188,7 +3190,8 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
       }
       NxClient_SetSurfaceClientComposition(sink->soc.surfaceClientId, &vComposition );
 
-      if ( needUpdate )
+      /* also send it if the geometry was applied early, before the surface/sb existed */
+      if ( needUpdate || !sink->soc.holePunchDone )
       {
          // Send a buffer to compositor to update hole punch geometry
          if ( sink->soc.sb && sink->surface )
@@ -3204,6 +3207,7 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
             wl_surface_attach( sink->surface, buff, sink->windowX, sink->windowY );
             wl_surface_damage( sink->surface, 0, 0, sink->windowWidth, sink->windowHeight );
             wl_surface_commit( sink->surface );
+            sink->soc.holePunchDone= true;
          }
       }
    }
@@ -4892,7 +4896,9 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       sink->soc.presentationStarted= FALSE;
       updateVideoDecoderSettings( sink );
 
-      /* set window geometry before the window becomes visible (avoids flicker) */
+      /* set window geometry before the window becomes visible (avoids flicker);
+       * keep hidden meanwhile, sink->visible may be stale after a reacquire */
+      sink->visible= false;
       gst_westeros_sink_soc_update_video_position( sink );
 
       NEXUS_SurfaceComposition composition;

@@ -43,9 +43,19 @@ typedef struct NxClient_VideoDecoderFeederCapabilities {
     uint32_t colorDepth;
 } NxClient_VideoDecoderFeederCapabilities;
 
+/* Tristate enable */
+typedef enum NEXUS_TristateEnable {
+    NEXUS_TristateEnable_eDisable = 0,
+    NEXUS_TristateEnable_eEnable,
+    NEXUS_TristateEnable_eNotSet,
+    NEXUS_TristateEnable_eAuto = NEXUS_TristateEnable_eNotSet
+} NEXUS_TristateEnable;
+
 /* Video Decoder Capabilities */
 typedef struct NxClient_VideoDecoderCapabilities {
     bool secureVideo;
+    bool virtualized;
+    NEXUS_TristateEnable sharedStc;
     uint32_t maxWidth;
     uint32_t maxHeight;
     uint32_t colorDepth;

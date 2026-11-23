@@ -323,6 +323,7 @@ typedef struct NEXUS_VideoDecoderSettings {
     NEXUS_CallbackDesc firstPts;
     NEXUS_CallbackDesc ptsError;
     NEXUS_CallbackDesc streamChanged;
+    bool bestEffortBvn;
 } NEXUS_VideoDecoderSettings;
 
 /* Simple Video Decoder Start Settings */
