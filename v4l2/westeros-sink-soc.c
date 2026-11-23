@@ -7468,7 +7468,8 @@ capture_start:
          }
 
 		  ++tempDecodeCount;
-         //++sink->soc.frameDecodeCount;
+          if(sink->soc.frameDecodeCount > 1) 
+			  ++sink->soc.frameDecodeCount;
 
          {
             gint64 currFramePTS= 0;
