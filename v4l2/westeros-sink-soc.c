@@ -7068,7 +7068,7 @@ static gpointer wstVideoOutputThread(gpointer data)
    int32_t bufferType;
    bool wasPaused= false;
    bool havePriEvent;
-   static tempDecodeCount=0;
+   static int tempDecodeCount=0;
 
    GST_DEBUG("wstVideoOutputThread: enter");
 
