@@ -264,6 +264,7 @@ struct _GstWesterosSinkSoc
    int frameWidthStream;
    int frameHeightStream;
    int frameInCount;
+   int frameInCountAtDecodeStart;
    int frameOutCount;
    int frameDecodeCount;
    int frameDisplayCount;
