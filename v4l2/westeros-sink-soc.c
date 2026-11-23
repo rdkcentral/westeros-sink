@@ -7299,9 +7299,9 @@ capture_start:
 
             if ( pfd.revents & (POLLIN|POLLRDNORM) )
             {
-			    GST_ERROR("wstVideoOutputThread: gong to call capture_ready --> but sleep of 0.5 secs is calling");
+			    GST_ERROR("wstVideoOutputThread: gong to call capture_ready --> sink->soc.frameInCount value: %d but sleep of 0.5 secs is calling", sink->soc.frameInCount);
 				usleep(500000);
-				GST_ERROR("wstVideoOutputThread: 0.5s sleep is called before capture_ready");
+				GST_ERROR("wstVideoOutputThread: 0.5s sleep is called before capture_ready--> sink->soc.frameInCount:%d", sink->soc.frameInCount);
                goto capture_ready;
             }
          }
