@@ -7422,7 +7422,7 @@ capture_start:
 				postDecodeError( sink, "no output from decoder" );
 				sink->soc.decoderResetNeeded = true;
 				sink->soc.frameDecodeCount=tempDecodeCount;
-				GST_ERROR("Decode count has been updated here:%d,sink->soc.frameDecodeCount);
+                GST_ERROR("Decode count has been updated here:%d", sink->soc.frameDecodeCount);
 				pthread_mutex_unlock(&sink->soc.reset_lock);
 				GST_ERROR("Going to et new video decode start time\n");
 		    }
