@@ -41,8 +41,10 @@
 #define EOS_DETECT_DELAY (1500000)
 #define DEFAULT_CAPTURE_WIDTH (1280)
 #define DEFAULT_CAPTURE_HEIGHT (720)
-#define MAX_PIP_WIDTH (640)
-#define MAX_PIP_HEIGHT (360)
+/* The PIP (Video1) window is limited by the BVN box mode to half the display
+   width and height (BBOX stSizeLimits fraction 2,2): 960x540 on a 1080p display */
+#define MAX_PIP_WIDTH (960)
+#define MAX_PIP_HEIGHT (540)
 #define DEFAULT_LATENCY_TARGET (100)
 #define MAX_ZORDER (100)
 #define QOS_INTERVAL (1000)
@@ -3176,14 +3178,22 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
       vComposition.position.height= sink->soc.videoHeight;
       if ( sink->soc.usePip )
       {
-         // Restrict PIP window size
-         if ( sink->soc.videoWidth > MAX_PIP_WIDTH )
+         // Restrict PIP window size to half of the (virtual) display, matching the
+         // hardware window size limit
+         int maxPipWidth= vComposition.virtualDisplay.width/2;
+         int maxPipHeight= vComposition.virtualDisplay.height/2;
+         if ( (sink->soc.videoWidth > maxPipWidth) || (sink->soc.videoHeight > maxPipHeight) )
          {
-            vComposition.position.width= MAX_PIP_WIDTH;
+            GST_WARNING("PIP window limited to %dx%d: requested %dx%d clamped",
+                        maxPipWidth, maxPipHeight, sink->soc.videoWidth, sink->soc.videoHeight);
          }
-         if ( sink->soc.videoHeight > MAX_PIP_HEIGHT )
+         if ( sink->soc.videoWidth > maxPipWidth )
          {
-            vComposition.position.height= MAX_PIP_HEIGHT;
+            vComposition.position.width= maxPipWidth;
+         }
+         if ( sink->soc.videoHeight > maxPipHeight )
+         {
+            vComposition.position.height= maxPipHeight;
          }
       }
       NxClient_SetSurfaceClientComposition(sink->soc.surfaceClientId, &vComposition );
