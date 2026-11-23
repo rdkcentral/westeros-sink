@@ -7068,6 +7068,7 @@ static gpointer wstVideoOutputThread(gpointer data)
    int32_t bufferType;
    bool wasPaused= false;
    bool havePriEvent;
+   static tempDecodeCount=0;
 
    GST_DEBUG("wstVideoOutputThread: enter");
 
@@ -7300,8 +7301,8 @@ capture_start:
             if ( pfd.revents & (POLLIN|POLLRDNORM) )
             {
 			    GST_ERROR("wstVideoOutputThread: gong to call capture_ready --> sink->soc.frameInCount value: %d but sleep of 0.5 secs is calling", sink->soc.frameInCount);
-				usleep(500000);
-				GST_ERROR("wstVideoOutputThread: 0.5s sleep is called before capture_ready--> sink->soc.frameInCount:%d", sink->soc.frameInCount);
+				//usleep(500000);
+				GST_ERROR("wstVideoOutputThread:not calling ************** 0.5s sleep is called before capture_ready--> sink->soc.frameInCount:%d", sink->soc.frameInCount);
                goto capture_ready;
             }
          }
@@ -7418,8 +7419,10 @@ capture_start:
                      "Performing decoder reset (%d/%d)",
                      sink->soc.decoderRetryCount,
                      MAX_DECODER_RETRIES);
-				 postDecodeError( sink, "no output from decoder" );
+				postDecodeError( sink, "no output from decoder" );
 				sink->soc.decoderResetNeeded = true;
+				sink->soc.frameDecodeCount=tempDecodeCount;
+				GST_ERROR("Decode count has been updated here:%d,sink->soc.frameDecodeCount);
 				pthread_mutex_unlock(&sink->soc.reset_lock);
 				GST_ERROR("Going to et new video decode start time\n");
 		    }
@@ -7464,7 +7467,8 @@ capture_start:
             continue;
          }
 
-         ++sink->soc.frameDecodeCount;
+		  ++tempDecodeCount;
+         //++sink->soc.frameDecodeCount;
 
          {
             gint64 currFramePTS= 0;
