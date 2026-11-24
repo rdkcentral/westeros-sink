@@ -7405,7 +7405,7 @@ capture_start:
                          usleep( 1000 );
                          continue;
                       }		         
-					  if (sink->soc.decoderRetryCount >= MAX_DECODER_RETRIES || sink->soc.quitEOSDetectionThread)
+					  if (sink->soc.decoderRetryCount >= MAX_DECODER_RETRIES || sink->soc.hasEOSEvents )
       		        {
 		  			GST_ERROR("decoder retry exceeded or got EOS detected-- retry count:%d",sink->soc.decoderRetryCount);
 					sink->soc.decoderRetryCount=0;
