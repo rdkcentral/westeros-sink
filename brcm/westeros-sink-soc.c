@@ -4821,12 +4821,8 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
          LOCK( sink );
          goto done;
       }
-      #if (NEXUS_PLATFORM_VERSION_MAJOR>=16)
-      if ( sink->resCurrCaps.capabilities & EssRMgrVidCap_limitedResolution )
-      {
-         sink->soc.usePip= TRUE;
-      }
-      #endif
+      /* mosaic: a limited-resolution decoder (EssRMgrVidCap_limitedResolution) is no longer
+       * switched to PIP mode, it is used as a virtualized (mosaic) decoder instead */
    }
 
    sink->soc.videoWindow= NEXUS_SurfaceClient_AcquireVideoWindow( sink->soc.surfaceClient, 0);
