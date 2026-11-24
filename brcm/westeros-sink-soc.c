@@ -860,6 +860,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevNumDecoded= 0;
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.sb= 0;
+   sink->soc.holePunchDone= false;
    sink->soc.activeBuffers= 0;
    sink->soc.captureEnabled= FALSE;
    sink->soc.presentationStarted= FALSE;
@@ -2046,6 +2047,7 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
    {
       wl_sb_destroy( sink->soc.sb );
       sink->soc.sb= 0;
+      sink->soc.holePunchDone= false;
    }
 
    #if (defined (ENABLE_DOLBYVISION) || defined (ENABLE_HDR10)) && (NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(17,3))
@@ -3188,7 +3190,8 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
       }
       NxClient_SetSurfaceClientComposition(sink->soc.surfaceClientId, &vComposition );
 
-      if ( needUpdate )
+      /* also send it if the geometry was applied early, before the surface/sb existed */
+      if ( needUpdate || !sink->soc.holePunchDone )
       {
          // Send a buffer to compositor to update hole punch geometry
          if ( sink->soc.sb && sink->surface )
@@ -3204,6 +3207,7 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
             wl_surface_attach( sink->surface, buff, sink->windowX, sink->windowY );
             wl_surface_damage( sink->surface, 0, 0, sink->windowWidth, sink->windowHeight );
             wl_surface_commit( sink->surface );
+            sink->soc.holePunchDone= true;
          }
       }
    }
@@ -4765,6 +4769,9 @@ static void updateVideoDecoderSettings( GstWesterosSink *sink )
    ext_settings.treatIFrameAsRap= true;
    ext_settings.ignoreNumReorderFramesEqZero= true;
 
+   /* mosaic: let windows sharing the BVN path drop pictures instead of stalling */
+   settings.bestEffortBvn = true;
+
    rc= NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
    if ( rc != NEXUS_SUCCESS )
    {
@@ -4814,12 +4821,8 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
          LOCK( sink );
          goto done;
       }
-      #if (NEXUS_PLATFORM_VERSION_MAJOR>=16)
-      if ( sink->resCurrCaps.capabilities & EssRMgrVidCap_limitedResolution )
-      {
-         sink->soc.usePip= TRUE;
-      }
-      #endif
+      /* mosaic: a limited-resolution decoder (EssRMgrVidCap_limitedResolution) is no longer
+       * switched to PIP mode, it is used as a virtualized (mosaic) decoder instead */
    }
 
    sink->soc.videoWindow= NEXUS_SurfaceClient_AcquireVideoWindow( sink->soc.surfaceClient, 0);
@@ -4879,6 +4882,9 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       connectSettings.simpleVideoDecoder[0].windowCapabilities.maxWidth= MAX_PIP_WIDTH;
       connectSettings.simpleVideoDecoder[0].windowCapabilities.maxHeight= MAX_PIP_HEIGHT;
    }
+   /* mosaic: join a mosaic group, each pipeline keeps its own STC */
+   connectSettings.simpleVideoDecoder[0].decoderCapabilities.virtualized= true;
+   connectSettings.simpleVideoDecoder[0].decoderCapabilities.sharedStc = NEXUS_TristateEnable_eDisable;
    rc= NxClient_Connect(&connectSettings, &sink->soc.connectId);
    GST_DEBUG("sinkAcquireVideo: NxClient_Connect rc %d connectId %d", rc, sink->soc.connectId);
    if ( rc == NEXUS_SUCCESS )
@@ -4886,10 +4892,10 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       sink->soc.presentationStarted= FALSE;
       updateVideoDecoderSettings( sink );
 
-      if ( sink->soc.usePip )
-      {
-         gst_westeros_sink_soc_update_video_position( sink );
-      }
+      /* set window geometry before the window becomes visible (avoids flicker);
+       * keep hidden meanwhile, sink->visible may be stale after a reacquire */
+      sink->visible= false;
+      gst_westeros_sink_soc_update_video_position( sink );
 
       NEXUS_SurfaceComposition composition;
       NxClient_GetSurfaceClientComposition( sink->soc.surfaceClientId, &composition );

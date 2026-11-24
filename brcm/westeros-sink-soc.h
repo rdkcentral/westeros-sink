@@ -157,6 +157,7 @@ struct _GstWesterosSinkSoc
    int videoHeight;
 
    struct wl_sb *sb;
+   bool holePunchDone; /* initial hole-punch buffer committed to the compositor */
    int activeBuffers;
 };
 
