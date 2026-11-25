@@ -225,6 +225,9 @@ struct _GstWesterosSink
    long long statsLogLastLogTime;
    int statsLogFrameRenderCountLast;
 
+   /* rdk-capture-session was rejected; NULL->READY fails. */
+   gboolean captureSessionInvalid;
+
    struct _GstWesterosSinkSoc soc;
 };
 
