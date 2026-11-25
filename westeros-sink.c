@@ -75,7 +75,8 @@ enum
   PROP_VIDEO_PTS,
   PROP_RES_PRIORITY,
   PROP_RES_USAGE,
-  PROP_DISPLAY_NAME
+  PROP_DISPLAY_NAME,
+  PROP_RDK_CAPTURE_SESSION
 };
 
 #ifdef USE_GST1
@@ -1159,6 +1160,14 @@ static void gst_westeros_sink_class_init(GstWesterosSinkClass *klass)
            "Name of wayland display to use",
            NULL, G_PARAM_WRITABLE));
 
+   /* SoC Video Frame Capture (SPECIFICATION-soc-video-frame-capture.md 6.2):
+    * borrowed ICaptureSession pointer, set before NULL->READY. */
+   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_RDK_CAPTURE_SESSION,
+       g_param_spec_pointer ("rdk-capture-session", "RDK capture session",
+           "Borrowed ICaptureSession pointer for video frame capture. Set once, before NULL->READY; "
+           "a NULL or different session fails the transition to READY.",
+           G_PARAM_READWRITE));
+
 #ifdef USE_GST1
   GST_DEBUG_CATEGORY_INIT (gst_westeros_sink_debug,
                            #ifdef USE_RAW_SINK
@@ -1308,6 +1317,7 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
 
    sink->displayName= 0;
    sink->display= 0;
+   sink->captureSessionInvalid= FALSE;
    sink->currentSegment = NULL;
 
    sink->processSendEvent= 0;
@@ -1565,6 +1575,20 @@ static void gst_westeros_sink_set_property(GObject *object, guint prop_id, const
          break;
       }
 
+      case PROP_RDK_CAPTURE_SESSION:
+      {
+         gpointer session= g_value_get_pointer(value);
+         #ifdef WESTEROS_SINK_SOC_HAVE_CAPTURE_SESSION
+         if ( !gst_westeros_sink_soc_set_capture_session( sink, session ) )
+         #endif
+         {
+            /* A setter cannot fail, so the error is reported by NULL->READY. */
+            GST_ERROR_OBJECT(sink, "Failed to set capture session %p", session);
+            sink->captureSessionInvalid= TRUE;
+         }
+         break;
+      }
+
       default:
          gst_westeros_sink_soc_set_property(object, prop_id, value, pspec);
          break;
@@ -1622,6 +1646,13 @@ static void gst_westeros_sink_get_property(GObject *object, guint prop_id, GValu
             UNLOCK(sink);
          }
          break;
+      case PROP_RDK_CAPTURE_SESSION:
+         #ifdef WESTEROS_SINK_SOC_HAVE_CAPTURE_SESSION
+         g_value_set_pointer(value, sink->soc.captureSession);
+         #else
+         g_value_set_pointer(value, NULL);
+         #endif
+         break;
       default:
          gst_westeros_sink_soc_get_property(object, prop_id, value, pspec);
          break;
@@ -1652,6 +1683,16 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
       {
          printf("westeros (sink) version " WESTEROS_SINK_VERSION_FMT "\n", WESTEROS_SINK_VERSION );
          printf("gst version %d.%d.%d\n", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO);
+
+         if ( sink->captureSessionInvalid )
+         {
+            GST_ELEMENT_ERROR(sink, RESOURCE, SETTINGS,
+                              ("Invalid rdk-capture-session"),
+                              ("rdk-capture-session was NULL, replaced by a different session, "
+                               "or is not supported by this backend"));
+            result= GST_STATE_CHANGE_FAILURE;
+            break;
+         }
 
          resMgrInit(sink);
          resMgrRequestDecoder(sink);
@@ -2395,6 +2436,10 @@ static GstFlowReturn gst_westeros_sink_preroll(GstBaseSink *base_sink, GstBuffer
       return GST_FLOW_WRONG_STATE;
       #endif
    }
+
+   #ifdef WESTEROS_SINK_SOC_HAVE_CAPTURE_SESSION
+   gst_westeros_sink_soc_capture_preroll( sink, buffer );
+   #endif
 
    return GST_FLOW_OK;
 }
