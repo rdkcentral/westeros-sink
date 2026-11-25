@@ -50,6 +50,37 @@
 #define MIN_PLAYBACK_RATE_WITH_AUDIO (0.25)
 #define MAX_PLAYBACK_RATE_WITH_AUDIO (2.0)
 
+typedef enum
+{
+   GST_SOC_METRIC_VIDEO_FRAME_DROP= 1,
+   GST_SOC_METRIC_AUDIO_FRAME_DROP= 2,
+   GST_SOC_METRIC_VIDEO_DECODE_ERROR= 3,
+   GST_SOC_METRIC_AUDIO_DECODE_ERROR= 4,
+   GST_SOC_METRIC_VIDEO_FRAME_REPEAT= 5,
+   GST_SOC_METRIC_AUDIO_GAP= 6,
+   GST_SOC_METRIC_BUFFER_UNDERFLOW= 7
+} GstWesterosSinkSocMetric;
+
+typedef enum
+{
+   GST_SOC_METRIC_OCCURRENCE= 1,
+   GST_SOC_METRIC_EPISODE_STARTED= 2,
+   GST_SOC_METRIC_EPISODE_RESOLVED= 3
+} GstWesterosSinkSocMetricObservation;
+
+typedef struct
+{
+   guint32 previous;
+} GstWesterosSinkSocMetricCounter;
+
+typedef struct
+{
+   gboolean active;
+   guint64 started_ns;
+   guint64 count;
+   gint64 pts_ns;
+} GstWesterosSinkSocMetricEpisode;
+
 struct _GstWesterosSinkSoc
 {
    int captureWidth;
@@ -97,6 +128,29 @@ struct _GstWesterosSinkSoc
    guint32 numDecoded;
    guint32 numDropped;
    guint32 numDroppedOutOfSegment;
+   guint64 metricRendered;
+   guint64 metricDropped;
+   guint64 metricCorrupted;
+   GMutex metricMutex;
+   GCond metricPublished;
+   GQueue metricMessages;
+   gboolean metricPublishScheduled;
+   GThread *metricPublishThread;
+   GstWesterosSinkSocMetricCounter metricDisplayed;
+   GstWesterosSinkSocMetricCounter metricErrors;
+   GstWesterosSinkSocMetricCounter metricInputErrors;
+   GstWesterosSinkSocMetricCounter metricDecodeDrops;
+   GstWesterosSinkSocMetricCounter metricDisplayDrops;
+   GstWesterosSinkSocMetricCounter metricDisplayErrors;
+   GstWesterosSinkSocMetricCounter metricRepeats;
+   GstWesterosSinkSocMetricCounter metricFifoEmpty;
+   GstWesterosSinkSocMetricEpisode metricRepeat;
+   GstWesterosSinkSocMetricEpisode metricUnderflow;
+   gboolean metricActive;
+   gboolean metricStartPending;   /* start state unknown, the next sample reads it */
+   gboolean metricEos;
+   gboolean metricNormalPresentation;
+   gboolean metricUnderflowEnabled;
    gboolean firstPtsCallbackCalled;
    gboolean ignoreDiscontinuity;
    gboolean checkForEOS;
