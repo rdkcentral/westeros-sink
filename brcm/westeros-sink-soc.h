@@ -117,6 +117,8 @@ struct _GstWesterosSinkSoc
    guint64 metricUnderflowBytes;
    guint metricUnderflowPollCount;
    gboolean metricUnderflowPollDue;
+   guint metricPrevDisplayed;
+   guint64 metricRendered;
    gboolean metricStatsUnavailable;
    gboolean captureEnabled;
    gboolean videoPlaying;

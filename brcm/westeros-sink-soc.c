@@ -2777,6 +2777,7 @@ static gpointer captureThread(gpointer data)
             LOCK(sink);
             resolveMetricEpisodes( sink, (guint64)g_get_monotonic_time()*1000ULL );
             resetMetricEpisodes( sink );
+            sink->soc.metricPrevDisplayed= 0;
             UNLOCK(sink);
          }
          GstPad *pad= gst_pad_get_peer( sink->peerPad );
