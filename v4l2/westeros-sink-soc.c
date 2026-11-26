@@ -94,7 +94,8 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
 #define INT_FRAME(FORMAT, ...)      frameLog( "FRAME: " FORMAT "\n", __VA_ARGS__)
 #define FRAME(...)                  INT_FRAME(__VA_ARGS__, "")
 
-#define postDecodeError( sink, description ) \
+#define MAX_DECODER_RETRIES 3
+#define postDecodeErrorAndExit( sink, description ) \
                                 { \
                                    GThread *temp= sink->soc.videoOutputThread; \
                                    postErrorMessage( (sink), GST_STREAM_ERROR_DECODE, "video decode error", description); \
@@ -103,6 +104,10 @@ GST_DEBUG_CATEGORY_EXTERN (gst_westeros_sink_debug);
                                    sink->soc.videoOutputThread= temp; \
                                 }
 
+#define postDecodeError( sink, description ) \
+                                { \
+                                   postErrorMessage( (sink), GST_STREAM_ERROR_DECODE, "video decode error", description); \
+                                }
 enum
 {
   PROP_DEVICE= PROP_SOC_BASE,
@@ -988,6 +993,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.frameInCount= 0;
    sink->soc.frameOutCount= 0;
    sink->soc.videoDecodeStartTime= 0;
+   sink->soc.decoderRetryCount=0;
+   sink->soc.decoderResetNeeded=FALSE;
    sink->soc.frameDecodeCount= 0;
    sink->soc.frameDisplayCount= 0;
    sink->soc.expectNoLastFrame= FALSE;
@@ -2603,6 +2610,8 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    sink->soc.startedOutOfSegment= FALSE;
+  // sink->soc.decoderRetryCount=0;
+   sink->soc.decoderResetNeeded=FALSE;
    wstFlushPixelAspectRatio( sink, false );
    #ifdef USE_GST_AFD
    wstFlushAFDInfo( sink, false );
@@ -7059,6 +7068,7 @@ static gpointer wstVideoOutputThread(gpointer data)
    int32_t bufferType;
    bool wasPaused= false;
    bool havePriEvent;
+   static int tempDecodeCount=0;
 
    GST_DEBUG("wstVideoOutputThread: enter");
 
@@ -7077,7 +7087,7 @@ capture_start:
          if ( !sink->soc.quitVideoOutputThread )
          {
             GST_ERROR("wstVideoOutputThread: v4l2Fd %d outBuffers %p", sink->soc.v4l2Fd, sink->soc.outBuffers);
-            postDecodeError( sink, "no dev/no outBuffers" );
+            postDecodeErrorAndExit( sink, "no dev/no outBuffers" );
          }
          goto exit;
       }
@@ -7095,7 +7105,7 @@ capture_start:
          {
             GST_ERROR("wstVideoOutputThread: failed to queue output buffer: rc %d errno %d", rc, errno);
             UNLOCK(sink);
-            postDecodeError( sink, "output enqueue error" );
+            postDecodeErrorAndExit( sink, "output enqueue error" );
             goto exit;
          }
          ++sink->soc.outQueuedCount;
@@ -7108,7 +7118,7 @@ capture_start:
       {
          UNLOCK(sink);
          GST_ERROR("streamon failed for output: fd %d, rc %d errno %d", sink->soc.v4l2Fd, rc, errno );
-         postDecodeError( sink, "STREAMON failure" );
+         postDecodeErrorAndExit( sink, "STREAMON failure" );
          goto exit;
       }
 
@@ -7290,6 +7300,9 @@ capture_start:
 
             if ( pfd.revents & (POLLIN|POLLRDNORM) )
             {
+			    GST_ERROR("wstVideoOutputThread: gong to call capture_ready --> sink->soc.frameInCount value: %d but sleep of 0.5 secs is calling", sink->soc.frameInCount);
+				//usleep(500000);
+				GST_ERROR("wstVideoOutputThread:not calling ************** 0.5s sleep is called before capture_ready--> sink->soc.frameInCount:%d", sink->soc.frameInCount);
                goto capture_ready;
             }
          }
@@ -7303,7 +7316,7 @@ capture_start:
          wstUpdateAVSyncCtx( sink, sink->soc.avsctx );
          #endif
          wstProcessMessagesVideoClientConnection( sink->soc.conn );
-
+		GST_ERROR("sink->soc.frameDecodeCount:%d",sink->soc.frameDecodeCount);
          if ( sink->windowChange )
          {
             sink->windowChange= false;
@@ -7379,17 +7392,46 @@ capture_start:
                      break;
                   }
                }
+			   GST_ERROR("sink->soc.frameDecodeCount before condition check:%d",sink->soc.frameDecodeCount);
                if ( (sink->soc.frameDecodeCount == 0) && (sink->soc.frameInCount > 0) && !sink->soc.videoPaused && !sink->soc.decodeError )
                {
                   gint64 now= g_get_monotonic_time();
                   float frameRate= (sink->soc.frameRate != 0.0 ? sink->soc.frameRate : 30.0);
                   float frameDelay= sink->soc.frameInCount / frameRate;
-                  GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
+                  GST_DEBUG("frameRate:%f, sink->soc.frameDecodeCount:%d, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate,sink->soc.frameDecodeCount, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
-                     sink->soc.decodeError= TRUE;
-                     postDecodeError( sink, "no output from decoder" );
-                     goto exit;
+					  if ( pthread_mutex_trylock(&sink->soc.reset_lock) != 0 )
+                      {
+                         usleep( 1000 );
+                         continue;
+                      }		         
+					  if (sink->soc.decoderRetryCount >= MAX_DECODER_RETRIES || sink->soc.hasEOSEvents )
+      		        {
+		  			GST_ERROR("decoder retry exceeded or got EOS detected-- retry count:%d",sink->soc.decoderRetryCount);
+					sink->soc.decoderRetryCount=0;
+                    sink->soc.decodeError= TRUE;
+				    pthread_mutex_unlock(&sink->soc.reset_lock);
+                    postDecodeErrorAndExit( sink, "no output from decoder" );
+                    goto exit;			
+				}
+		    else{
+				GST_ERROR("No decoder output detected. "
+                     "Performing decoder reset (%d/%d)",
+                     sink->soc.decoderRetryCount,
+                     MAX_DECODER_RETRIES);
+				postDecodeError( sink, "no output from decoder" );
+				sink->soc.decoderResetNeeded = true;
+				sink->soc.frameDecodeCount=tempDecodeCount;
+				if(sink->soc.frameDecodeCount >= 1){
+					GST_ERROR("received some decoded frames so not retrying");
+					sink->soc.decoderRetryCount = 3;
+				}
+                GST_ERROR("Decode count has been updated here:%d", sink->soc.frameDecodeCount);
+				pthread_mutex_unlock(&sink->soc.reset_lock);
+				GST_ERROR("Going to et new video decode start time\n");
+		    }
+
                   }
                }
                usleep( 1000 );
@@ -7430,7 +7472,9 @@ capture_start:
             continue;
          }
 
-         ++sink->soc.frameDecodeCount;
+		  ++tempDecodeCount;
+          if(sink->soc.frameDecodeCount > 1) 
+			  ++sink->soc.frameDecodeCount;
 
          {
             gint64 currFramePTS= 0;
@@ -7635,6 +7679,7 @@ static gpointer wstEOSDetectionThread(gpointer data)
    bool videoPlaying;
    bool eosEventSeen;
    double frameRate;
+   bool doReset = false;
 
    GST_DEBUG("wstVideoEOSThread: enter");
 
@@ -7644,9 +7689,34 @@ static gpointer wstEOSDetectionThread(gpointer data)
    outputFrameCount= sink->soc.frameOutCount;
    frameRate= (sink->soc.frameRate > 0.0 ? sink->soc.frameRate : 30.0);
    UNLOCK(sink);
+
    while( !sink->soc.quitEOSDetectionThread )
    {
       usleep( 1000000/frameRate );
+	  pthread_mutex_lock(&sink->soc.reset_lock);
+      if(sink->soc.decoderResetNeeded )
+      {
+	      GST_ERROR("In wstEOSDetectionThread: Resetting the decoder");
+		  sink->soc.decoderRetryCount++;
+		  if ( sink->videoStarted )
+          {
+			  doReset = true;
+		  }
+		  sink->soc.decoderResetNeeded = false;
+		  pthread_mutex_unlock(&sink->soc.reset_lock);
+		  sink->soc.videoDecodeStartTime = g_get_monotonic_time();
+		  if(doReset)
+		  {
+			  GST_ERROR("calling westeros decoder reset");
+			  wstDecoderReset(sink,false);
+			  doReset = false;
+		  }
+      }
+	  else
+	  {
+		  		  pthread_mutex_unlock(&sink->soc.reset_lock);
+	  }
+	   
 
       if ( !sink->soc.quitEOSDetectionThread )
       {
