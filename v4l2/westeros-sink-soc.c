@@ -7316,7 +7316,7 @@ capture_start:
          wstUpdateAVSyncCtx( sink, sink->soc.avsctx );
          #endif
          wstProcessMessagesVideoClientConnection( sink->soc.conn );
-
+		GST_ERROR("sink->soc.frameDecodeCount:%d",sink->soc.frameDecodeCount);
          if ( sink->windowChange )
          {
             sink->windowChange= false;
@@ -7392,12 +7392,13 @@ capture_start:
                      break;
                   }
                }
+			   GST_ERROR("sink->soc.frameDecodeCount before condition check:%d",sink->soc.frameDecodeCount);
                if ( (sink->soc.frameDecodeCount == 0) && (sink->soc.frameInCount > 0) && !sink->soc.videoPaused && !sink->soc.decodeError )
                {
                   gint64 now= g_get_monotonic_time();
                   float frameRate= (sink->soc.frameRate != 0.0 ? sink->soc.frameRate : 30.0);
                   float frameDelay= sink->soc.frameInCount / frameRate;
-                  GST_DEBUG("frameRate:%f, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate, frameDelay, sink->soc.videoDecodeStartTime, now);
+                  GST_DEBUG("frameRate:%f, sink->soc.frameDecodeCount:%d, frameDelay:%f, Video Decode Start time:%" PRId64", Now time:%" PRId64" ", frameRate,sink->soc.frameDecodeCount, frameDelay, sink->soc.videoDecodeStartTime, now);
                   if ( (frameDelay > 1.0) && (now-sink->soc.videoDecodeStartTime > 300000LL) )
                   {
 					  if ( pthread_mutex_trylock(&sink->soc.reset_lock) != 0 )
@@ -7422,6 +7423,10 @@ capture_start:
 				postDecodeError( sink, "no output from decoder" );
 				sink->soc.decoderResetNeeded = true;
 				sink->soc.frameDecodeCount=tempDecodeCount;
+				if(sink->soc.frameDecodeCount >= 1){
+					GST_ERROR("received some decoded frames so not retrying");
+					sink->soc.decoderRetryCount = 3;
+				}
                 GST_ERROR("Decode count has been updated here:%d", sink->soc.frameDecodeCount);
 				pthread_mutex_unlock(&sink->soc.reset_lock);
 				GST_ERROR("Going to et new video decode start time\n");
