@@ -2414,6 +2414,15 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
          ++sink->soc.inQueuedCount;
          sink->soc.inBuffers[buffIndex].queued= true;
          sink->soc.inBuffers[buffIndex].gstbuf= gst_buffer_ref(buffer);
+	 uint8_t *data = sink->soc.inBuffers[buffIndex].start;
+         int size = sink->soc.inBuffers[buffIndex].buf->m.planes[0].bytesused;
+
+         GST_ERROR("Buffer[%d] data: ", buffIndex);
+
+         for (int i = 0; i < MIN(size, 32); i++)
+         {
+             GST_ERROR("%02X ", data[i]);
+         }
          UNLOCK(sink);
          avProgLog( GST_BUFFER_PTS(buffer), sink->resAssignedId, "StoD", wstInFullness(sink));
       }
