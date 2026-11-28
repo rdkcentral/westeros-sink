@@ -120,6 +120,16 @@ struct _GstWesterosSinkSoc
    guint metricPrevDisplayed;
    guint64 metricRendered;
    gboolean metricStatsUnavailable;
+   guint metricPrevDisplayDrops;
+   guint metricPrevDecodeErrors;
+   gboolean mockMetrics;
+   guint64 mockFrameCount;
+   gboolean mockRepeatActive;
+   guint64 mockRepeatStartFrame;
+   guint64 mockRepeatStartNs;
+   gboolean mockUnderflowActive;
+   guint64 mockUnderflowStartFrame;
+   guint64 mockUnderflowStartNs;
    gboolean captureEnabled;
    gboolean videoPlaying;
    int framesBeforeHideVideo;

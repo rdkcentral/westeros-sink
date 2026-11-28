@@ -150,9 +150,11 @@ enum
 
 #define PTS45K_TO_NS( pts ) ( ((guint64)(pts)*GST_SECOND)/45000ULL )
 
-#define METRIC_FRAME_DROP_INTERVAL 100
-#define METRIC_FRAME_REPEAT_INTERVAL 80
-#define METRIC_DECODE_ERROR_INTERVAL 120
+#define METRIC_MOCK_FRAME_DROP_INTERVAL 100
+#define METRIC_MOCK_DECODE_ERROR_INTERVAL 120
+#define METRIC_MOCK_FRAME_REPEAT_INTERVAL 80
+#define METRIC_MOCK_UNDERFLOW_INTERVAL 135
+#define METRIC_MOCK_EPISODE_FRAMES 10
 #define METRIC_UNDERFLOW_POLL_INTERVAL 135
 #define METRIC_UNDERFLOW_HOLD_NS (1000ULL*1000000ULL)
 
@@ -182,7 +184,6 @@ static void updateUnderflowMetric( GstWesterosSink *sink, NEXUS_VideoDecoderStat
 static void resolveMetricEpisode( GstWesterosSink *sink, guint metricType, guint64 nowNs );
 static void resolveMetricEpisodes( GstWesterosSink *sink, guint64 nowNs );
 static void updateMetrics( GstWesterosSink *sink, NEXUS_VideoDecoderStatus *videoStatus );
-static void postIntervalMetrics( GstWesterosSink *sink, guint metricType, guint interval, guint64 prevFrames, guint64 currFrames, guint64 ptsNs );
 static gpointer captureThread(gpointer data);
 static void processFrame( GstWesterosSink *sink );
 static void updateVideoStatus( GstWesterosSink *sink );
@@ -896,6 +897,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevNumDecoded= 0;
    sink->soc.prevNumDecodeErrors= 0;
    sink->soc.metricStatsUnavailable= FALSE;
+   const char *mockMetricsEnv= getenv("WESTEROS_SINK_MOCK_METRICS");
+   sink->soc.mockMetrics= !(mockMetricsEnv && mockMetricsEnv[0] == '0');
    resetMetricEpisodes( sink );
    sink->soc.sb= 0;
    sink->soc.activeBuffers= 0;
@@ -1175,18 +1178,12 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
 
             serverPlaySpeed= g_value_get_float(value);
             GST_DEBUG("set prop serverPlaySpeed %f", serverPlaySpeed);
+            sink->soc.serverPlaySpeed= serverPlaySpeed;
             if ( sink->videoStarted )
             {
                LOCK(sink);
-               if ( sink->soc.videoDecoder && sink->soc.haveResources && !sink->flushStarted )
-               {
-                  NEXUS_VideoDecoderStatus videoStatus;
-                  if ( NEXUS_SUCCESS == NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) )
-                  {
-                     updateMetrics( sink, &videoStatus );
-                  }
-               }
                resolveMetricEpisodes( sink, (guint64)g_get_monotonic_time()*1000ULL );
+               UNLOCK(sink);
 
                NEXUS_VideoDecoderSettings settings;
                NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &settings);
@@ -1203,11 +1200,6 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                sink->soc.lastStartPts45k= 0;
 
                setDecodeMode( sink );
-               UNLOCK(sink);
-            }
-            else
-            {
-               sink->soc.serverPlaySpeed= serverPlaySpeed;
             }
          }
          break;
@@ -1598,14 +1590,6 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
 gboolean gst_westeros_sink_soc_playing_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
    LOCK(sink);
-   if ( sink->soc.videoDecoder && sink->soc.haveResources && !sink->flushStarted )
-   {
-      NEXUS_VideoDecoderStatus videoStatus;
-      if ( NEXUS_SUCCESS == NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) )
-      {
-         updateMetrics( sink, &videoStatus );
-      }
-   }
    resolveMetricEpisode( sink, METRIC_VIDEO_FRAME_REPEAT, (guint64)g_get_monotonic_time()*1000ULL );
    sink->soc.videoPlaying = FALSE;
    UNLOCK(sink);
@@ -1968,12 +1952,8 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    startSettings.smoothResolutionChange= TRUE;
    startSettings.maxWidth= sink->maxWidth;
    startSettings.maxHeight= sink->maxHeight;
-   if ( sink->soc.usePip )
-   {
-      startSettings.maxWidth= MAX_PIP_HEIGHT;
-      startSettings.maxHeight= MAX_PIP_WIDTH;
-   }
 
+   
    rc= NEXUS_SimpleVideoDecoder_SetStcChannel(sink->soc.videoDecoder, sink->soc.stcChannel);
    if ( rc != NEXUS_SUCCESS )
    {
@@ -2505,16 +2485,6 @@ static void postMetricMessage( GstWesterosSink *sink, guint metricType, guint64 
    postMetricEpisodeMessage( sink, metricType, METRIC_PHASE_OCCURRENCE, ptsNs, 0, 0 );
 }
 
-static void postIntervalMetrics( GstWesterosSink *sink, guint metricType, guint interval, guint64 prevFrames, guint64 currFrames, guint64 ptsNs )
-{
-   guint64 count= (currFrames/interval) - (prevFrames/interval);
-   while ( count > 0 )
-   {
-      postMetricMessage( sink, metricType, ptsNs );
-      --count;
-   }
-}
-
 static void postMetricEpisodeMessage( GstWesterosSink *sink, guint metricType, guint phase, guint64 ptsNs, guint64 count, guint64 durationNs )
 {
    GstStructure *s= gst_structure_new( "media-pipeline-metric",
@@ -2544,7 +2514,7 @@ static void postMetricEpisodeMessage( GstWesterosSink *sink, guint metricType, g
 
 static guint metricDelta( guint curr, guint *prev )
 {
-   guint delta= curr - *prev;
+   guint delta= (curr >= *prev) ? (curr - *prev) : curr;
    *prev= curr;
    return delta;
 }
@@ -2562,6 +2532,8 @@ static void resetMetricEpisodes( GstWesterosSink *sink )
    sink->soc.metricUnderflowBytes= 0;
    sink->soc.metricUnderflowPollCount= 0;
    sink->soc.metricUnderflowPollDue= FALSE;
+   sink->soc.mockRepeatActive= FALSE;
+   sink->soc.mockUnderflowActive= FALSE;
 }
 
 static void startPendingUnderflow( GstWesterosSink *sink )
@@ -2577,6 +2549,10 @@ static void startPendingUnderflow( GstWesterosSink *sink )
 
 static void beginUnderflowEpisode( GstWesterosSink *sink, guint pts, guint64 bytes, guint64 nowNs )
 {
+   if ( sink->soc.mockMetrics )
+   {
+      return;
+   }
    sink->soc.metricUnderflowPending= TRUE;
    sink->soc.metricUnderflowPts= pts;
    sink->soc.metricUnderflowStartNs= nowNs;
@@ -2637,18 +2613,72 @@ static void updateUnderflowMetric( GstWesterosSink *sink, NEXUS_VideoDecoderStat
    }
 }
 
+static void updateMockMetrics( GstWesterosSink *sink )
+{
+   guint64 nowNs= (guint64)g_get_monotonic_time()*1000ULL;
+   guint64 frame= ++sink->soc.mockFrameCount;
+
+   if ( sink->soc.mockRepeatActive && (frame - sink->soc.mockRepeatStartFrame) >= METRIC_MOCK_EPISODE_FRAMES )
+   {
+      postMetricEpisodeMessage( sink, METRIC_VIDEO_FRAME_REPEAT, METRIC_PHASE_RESOLVED, 0,
+                                frame - sink->soc.mockRepeatStartFrame, nowNs - sink->soc.mockRepeatStartNs );
+      sink->soc.mockRepeatActive= FALSE;
+   }
+   if ( sink->soc.mockUnderflowActive && (frame - sink->soc.mockUnderflowStartFrame) >= METRIC_MOCK_EPISODE_FRAMES )
+   {
+      postMetricEpisodeMessage( sink, METRIC_BUFFER_UNDERFLOW, METRIC_PHASE_RESOLVED, 0,
+                                0, nowNs - sink->soc.mockUnderflowStartNs );
+      sink->soc.mockUnderflowActive= FALSE;
+   }
+
+   if ( frame % METRIC_MOCK_FRAME_DROP_INTERVAL == 0 )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_FRAME_DROP, 0 );
+   }
+   if ( frame % METRIC_MOCK_DECODE_ERROR_INTERVAL == 0 )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_DECODE_ERROR, 0 );
+   }
+   if ( frame % METRIC_MOCK_FRAME_REPEAT_INTERVAL == 0 )
+   {
+      sink->soc.mockRepeatActive= TRUE;
+      sink->soc.mockRepeatStartFrame= frame;
+      sink->soc.mockRepeatStartNs= nowNs;
+      postMetricEpisodeMessage( sink, METRIC_VIDEO_FRAME_REPEAT, METRIC_PHASE_STARTED, 0, 0, 0 );
+   }
+   if ( frame % METRIC_MOCK_UNDERFLOW_INTERVAL == 0 )
+   {
+      sink->soc.mockUnderflowActive= TRUE;
+      sink->soc.mockUnderflowStartFrame= frame;
+      sink->soc.mockUnderflowStartNs= nowNs;
+      postMetricEpisodeMessage( sink, METRIC_BUFFER_UNDERFLOW, METRIC_PHASE_STARTED, 0, 0, 0 );
+   }
+}
+
 static void updateMetrics( GstWesterosSink *sink, NEXUS_VideoDecoderStatus *videoStatus )
 {
    guint64 ptsNs= PTS45K_TO_NS(videoStatus->pts);
    guint64 nowNs= (guint64)g_get_monotonic_time()*1000ULL;
    guint newRendered= metricDelta( videoStatus->numDisplayed, &sink->soc.metricPrevDisplayed );
-   guint64 prevRendered= sink->soc.metricRendered;
+   guint newDrops= metricDelta( videoStatus->numDisplayDrops, &sink->soc.metricPrevDisplayDrops );
+   guint newDecodeErrors= metricDelta( videoStatus->numDecodeErrors, &sink->soc.metricPrevDecodeErrors );
+   guint i;
+
+   if ( sink->soc.mockMetrics )
+   {
+      return;
+   }
 
    sink->soc.metricRendered += newRendered;
 
-   postIntervalMetrics( sink, METRIC_VIDEO_FRAME_DROP, METRIC_FRAME_DROP_INTERVAL, prevRendered, sink->soc.metricRendered, ptsNs );
-   postIntervalMetrics( sink, METRIC_VIDEO_FRAME_REPEAT, METRIC_FRAME_REPEAT_INTERVAL, prevRendered, sink->soc.metricRendered, ptsNs );
-   postIntervalMetrics( sink, METRIC_VIDEO_DECODE_ERROR, METRIC_DECODE_ERROR_INTERVAL, prevRendered, sink->soc.metricRendered, ptsNs );
+   for ( i= 0; i < newDrops; ++i )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_FRAME_DROP, ptsNs );
+   }
+   for ( i= 0; i < newDecodeErrors; ++i )
+   {
+      postMetricMessage( sink, METRIC_VIDEO_DECODE_ERROR, ptsNs );
+   }
 
    updateUnderflowMetric( sink, videoStatus, nowNs );
 }
@@ -2893,13 +2923,14 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
       {
          LOCK(sink);
          resolveMetricEpisode( sink, METRIC_VIDEO_FRAME_REPEAT, (guint64)g_get_monotonic_time()*1000ULL );
-         sink->soc.captureEnabled= TRUE;
          sink->soc.metricStatsUnavailable= TRUE;
-         if ( sink->soc.hideVideoDuringCapture )
-         {
-            sink->soc.framesBeforeHideVideo= 2;
-         }
          UNLOCK(sink);
+      }
+      sink->soc.captureEnabled= TRUE;
+
+      if ( sink->soc.hideVideoDuringCapture )
+      {
+         sink->soc.framesBeforeHideVideo= 2;
       }
    }
    else if ( !useGfxPath && sink->soc.captureEnabled )
@@ -3120,6 +3151,10 @@ static void updateVideoStatus( GstWesterosSink *sink )
    {
       sink->soc.metricUnderflowPollCount= 0;
       sink->soc.metricUnderflowPollDue= TRUE;
+   }
+   if ( sink->soc.mockMetrics && videoPlaying && !flushStarted )
+   {
+      updateMockMetrics( sink );
    }
    UNLOCK( sink );
 
@@ -4050,14 +4085,6 @@ static gboolean processEventSinkSoc(GstWesterosSink *sink, GstPad *pad, GstEvent
                   LOCK(sink);
                   if ( sink->playbackRate != playbackRate )
                   {
-                     if ( sink->soc.videoDecoder && sink->soc.haveResources && !sink->flushStarted )
-                     {
-                        NEXUS_VideoDecoderStatus videoStatus;
-                        if ( NEXUS_SUCCESS == NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) )
-                        {
-                           updateMetrics( sink, &videoStatus );
-                        }
-                     }
                      resolveMetricEpisode( sink, METRIC_VIDEO_FRAME_REPEAT,
                                            (guint64)g_get_monotonic_time()*1000ULL );
                   }
@@ -5354,8 +5381,7 @@ static void sinkReleaseResources( GstWesterosSink *sink )
 static GstStructure *wstSinkGetStats( GstWesterosSink * sink )
 {
    g_return_val_if_fail (sink != NULL, NULL);
-   return gst_structure_new( "application/x-gst-base-sink-stats",
+   return gst_structure_new ("application/x-gst-base-sink-stats",
       "dropped", G_TYPE_UINT64, (guint64)sink->soc.numDropped,
       "rendered", G_TYPE_UINT64, (guint64)sink->soc.numDecoded, NULL);
 }
-
